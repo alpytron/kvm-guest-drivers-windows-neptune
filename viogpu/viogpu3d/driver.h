@@ -136,6 +136,14 @@ VioGpu3DBuildPagingBuffer(_In_ CONST HANDLE hAdapter, _In_ DXGKARG_BUILDPAGINGBU
 
 NTSTATUS
 APIENTRY
+VioGpu3DAcquireSwizzlingRange(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_ACQUIRESWIZZLINGRANGE *pAcquireSwizzlingRange);
+
+NTSTATUS
+APIENTRY
+VioGpu3DReleaseSwizzlingRange(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_RELEASESWIZZLINGRANGE *pReleaseSwizzlingRange);
+
+NTSTATUS
+APIENTRY
 VioGpu3DPatch(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_PATCH *pPatch);
 
 NTSTATUS

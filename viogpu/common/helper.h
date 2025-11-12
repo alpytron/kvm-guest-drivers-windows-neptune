@@ -65,6 +65,8 @@ extern "C"
 
 #include <dispmprt.h>
 
+#include <usermode_accessors.h>
+
 #include "trace.h"
 }
 

@@ -100,15 +100,19 @@
 /* IDs for different capabilities.  Must all exist. */
 
 /* Common configuration */
-#define VIRTIO_PCI_CAP_COMMON_CFG 1
+#define VIRTIO_PCI_CAP_COMMON_CFG        1
 /* Notifications */
-#define VIRTIO_PCI_CAP_NOTIFY_CFG 2
+#define VIRTIO_PCI_CAP_NOTIFY_CFG        2
 /* ISR access */
-#define VIRTIO_PCI_CAP_ISR_CFG    3
+#define VIRTIO_PCI_CAP_ISR_CFG           3
 /* Device specific configuration */
-#define VIRTIO_PCI_CAP_DEVICE_CFG 4
+#define VIRTIO_PCI_CAP_DEVICE_CFG        4
 /* PCI configuration access */
-#define VIRTIO_PCI_CAP_PCI_CFG    5
+#define VIRTIO_PCI_CAP_PCI_CFG           5
+/* Additional shared memory capability */
+#define VIRTIO_PCI_CAP_SHARED_MEMORY_CFG 8
+/* PCI vendor data configuration */
+#define VIRTIO_PCI_CAP_VENDOR_CFG        9
 
 /* This is the PCI capability header: */
 struct virtio_pci_cap {
@@ -117,7 +121,8 @@ struct virtio_pci_cap {
     __u8 cap_len;    /* Generic PCI field: capability length */
     __u8 cfg_type;   /* Identifies the structure. */
     __u8 bar;        /* Where to find it. */
-    __u8 padding[3]; /* Pad to full dword. */
+    __u8 id;         /* Multiple capabilities of the same type */
+    __u8 padding[2]; /* Pad to full dword. */
     __le32 offset;   /* Offset within bar. */
     __le32 length;   /* Length of the structure, in bytes. */
 };
@@ -125,6 +130,24 @@ struct virtio_pci_cap {
 struct virtio_pci_notify_cap {
     struct virtio_pci_cap cap;
     __le32 notify_off_multiplier; /* Multiplier for queue_notify_off. */
+};
+
+/* This is the PCI vendor data capability header: */
+struct virtio_pci_vndr_data {
+    __u8 cap_vndr;   /* Generic PCI field: PCI_CAP_ID_VNDR */
+    __u8 cap_next;   /* Generic PCI field: next ptr. */
+    __u8 cap_len;    /* Generic PCI field: capability length */
+    __u8 cfg_type;   /* Identifies the structure. */
+    __u16 vendor_id; /* Identifies the vendor-specific format. */
+    /* For Vendor Definition */
+    /* Pads structure to a multiple of 4 bytes */
+    /* Reads must not have side effects */
+};
+
+struct virtio_pci_cap64 {
+    struct virtio_pci_cap cap;
+    __u32 offset_hi; /* Most sig 32 bits of offset */
+    __u32 length_hi; /* Most sig 32 bits of length */
 };
 
 /* Fields in VIRTIO_PCI_CAP_COMMON_CFG: */
@@ -272,7 +295,18 @@ struct virtio_device {
     // are used, or to an external allocation otherwise
     VirtIOQueueInfo *info;
     VirtIOQueueInfo inline_info[MAX_QUEUES_PER_DEVICE_DEFAULT];
+
+    /* modern virtio device host-visible shmem region */
+    struct {
+        bool available;
+        u8 bar;
+        u64 offset;
+        u64 length;
+    } shmem;
 };
+
+#define VIRTIO_GPU_SHM_ID_UNDEFINED    0
+#define VIRTIO_GPU_SHM_ID_HOST_VISIBLE 1
 
 /* Driver API: device init and shutdown
  * DeviceContext is a driver defined opaque value which will be passed to driver

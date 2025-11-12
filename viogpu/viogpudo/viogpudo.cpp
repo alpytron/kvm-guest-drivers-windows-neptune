@@ -3437,7 +3437,7 @@ void VioGpuAdapter::DestroyFrameBufferObj(BOOLEAN bReset)
     {
         resid = (UINT)m_pFrameBuf->GetId();
         m_CtrlQueue.DetachBacking(resid);
-        m_CtrlQueue.DestroyResource(resid);
+        m_CtrlQueue.DestroyResource(resid, NULL, NULL);
         if (bReset == TRUE)
         {
             m_CtrlQueue.SetScanout(0, 0, 0, 0, 0, 0);
@@ -3605,7 +3605,7 @@ VOID VioGpuAdapter::DpcRoutine(_In_ PDXGKRNL_INTERFACE pDxgkInterface)
                 }
                 if (pvbuf->complete_cb != NULL)
                 {
-                    pvbuf->complete_cb(pvbuf->complete_ctx);
+                    pvbuf->complete_cb(pvbuf->complete_ctx, pvbuf->buf, pvbuf->resp_buf);
                 }
                 if (pvbuf->auto_release)
                 {
@@ -3791,7 +3791,7 @@ void VioGpuAdapter::DestroyCursor()
     {
         UINT id = (UINT)m_pCursorBuf->GetId();
         m_CtrlQueue.DetachBacking(id);
-        m_CtrlQueue.DestroyResource(id);
+        m_CtrlQueue.DestroyResource(id, NULL, NULL);
         delete m_pCursorBuf;
         m_pCursorBuf = NULL;
         m_Idr.PutId(id);

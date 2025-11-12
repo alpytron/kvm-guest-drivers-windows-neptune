@@ -300,7 +300,7 @@ PVOID CPciBar::GetVA(PDXGKRNL_INTERFACE pDxgkInterface)
             {
                 Status = pDxgkInterface->DxgkCbMapMemory(pDxgkInterface->DeviceHandle,
                                                          m_BasePA,
-                                                         m_uSize,
+                                                         (ULONG) m_uSize,
                                                          TRUE,
                                                          FALSE,
                                                          MmNonCached,
@@ -325,7 +325,7 @@ PVOID CPciBar::GetVA(PDXGKRNL_INTERFACE pDxgkInterface)
         {
             Status = pDxgkInterface->DxgkCbMapMemory(pDxgkInterface->DeviceHandle,
                                                      m_BasePA,
-                                                     m_uSize,
+                                                     (ULONG) m_uSize,
                                                      FALSE,
                                                      FALSE,
                                                      MmNonCached,
@@ -450,6 +450,42 @@ bool CPciResources::Init(PDXGKRNL_INTERFACE pDxgkInterface, PCM_RESOURCE_LIST pR
                     break;
                 case CmResourceTypeBusNumber:
                     DbgPrint(TRACE_LEVEL_FATAL, ("Bus number\n"));
+                    break;
+                case CmResourceTypeMemoryLarge:
+                    {
+                        PHYSICAL_ADDRESS Start;
+                        ULONGLONG len;
+
+                        if ((pResDescriptor->Flags & CM_RESOURCE_MEMORY_LARGE_40) != 0) {
+                            Start = pResDescriptor->u.Memory40.Start;
+                            len = pResDescriptor->u.Memory40.Length40;
+                            len <<= 8;
+                        } else if ((pResDescriptor->Flags & CM_RESOURCE_MEMORY_LARGE_48) != 0) {
+                            Start = pResDescriptor->u.Memory48.Start;
+                            len = pResDescriptor->u.Memory48.Length48;
+                            len <<= 16;
+                        } else if ((pResDescriptor->Flags & CM_RESOURCE_MEMORY_LARGE_64) != 0) {
+                            Start = pResDescriptor->u.Memory64.Start;
+                            len = pResDescriptor->u.Memory64.Length64;
+                            len <<= 32;
+                        } else {
+                            DbgPrint(TRACE_LEVEL_ERROR, ("Unsupported large memory type = %d\n", pResDescriptor->Flags));
+                            break;
+                        }
+
+                        bar = virtio_get_bar_index(&pci_config, Start);
+                        DbgPrint(TRACE_LEVEL_FATAL,
+                                 ("Found IO large memory at %08I64X(%lld) bar %d\n", Start.QuadPart, len, bar));
+                        if (bar < 0)
+                        {
+                            break;
+                        }
+                        // This is most likely the "virtio modern memory (64bit)" bar, QEMU hardcodes it to have index 4
+                        m_Bars[bar] = CPciBar(Start, len, false, true);
+                    }
+                    break;
+                case CmResourceTypeDevicePrivate:
+                    DbgPrint(TRACE_LEVEL_FATAL, ("Device private data: [%ld %ld %ld]\n", pResDescriptor->u.DevicePrivate.Data[0], pResDescriptor->u.DevicePrivate.Data[1], pResDescriptor->u.DevicePrivate.Data[2]));
                     break;
                 default:
                     DbgPrint(TRACE_LEVEL_ERROR, ("Unsupported descriptor type = %d\n", pResDescriptor->Type));

@@ -27,7 +27,41 @@
  * SUCH DAMAGE.
  */
 #pragma once
+#include "baseobj.h"
 #include "helper.h"
+
+// TODO: benchmark
+#define VIOGPUIDR_LIST
+
+// Simple leaky ID allocator
+#if 0
+
+class VioGpuIdr
+{
+  public:
+    VioGpuIdr()
+    {
+        m_nextId = 0;
+    }
+
+    BOOLEAN Init(_In_ ULONG start) {
+        m_nextId = start;
+        return true;
+    }
+
+    ULONG GetId(VOID) {
+        return InterlockedIncrement(&m_nextId) /* -1 */;
+    }
+
+    VOID PutId(_In_ ULONG) {
+        /* Do nothing */
+    }
+
+  private:
+    volatile LONG m_nextId;
+};
+
+#else
 
 class VioGpuIdr
 {
@@ -38,6 +72,7 @@ class VioGpuIdr
     ULONG GetId(VOID);
     VOID PutId(_In_ ULONG id);
 
+#ifdef VIOGPUIDR_LIST
   private:
     VOID Close(VOID);
 
@@ -51,4 +86,17 @@ class VioGpuIdr
     ULONG m_nextId;
     KSPIN_LOCK m_lock;
     LIST_ENTRY m_freeList;
+#else
+  private:
+    KIRQL Lock();
+    VOID Unlock(KIRQL Irql);
+
+    ULONG m_nextId;
+    KSPIN_LOCK m_lock;
+    ULONG *m_items;
+    ULONGLONG m_count;
+    ULONGLONG m_capacity;
+#endif
 };
+
+#endif

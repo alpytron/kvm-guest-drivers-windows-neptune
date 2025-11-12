@@ -44,7 +44,7 @@ static BOOLEAN BuildSGElement(VirtIOBufferDescriptor *sg, PVOID buf, ULONG size)
     return FALSE;
 }
 
-static void NotifyEventCompleteCB(void *ctx)
+static void NotifyEventCompleteCB(void *ctx, void *, void *)
 {
     KeSetEvent((PKEVENT)ctx, IO_NO_INCREMENT, FALSE);
 }
@@ -438,7 +438,7 @@ void CtrlQueue::CreateResource(UINT res_id, UINT format, UINT width, UINT height
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 }
 
-void CtrlQueue::CreateResource3D(UINT res_id, VIOGPU_RESOURCE_OPTIONS *options)
+void CtrlQueue::CreateResource3D(UINT res_id, VIOGPU_RESOURCE_3D_OPTIONS *options)
 {
     PAGED_CODE();
 
@@ -468,7 +468,63 @@ void CtrlQueue::CreateResource3D(UINT res_id, VIOGPU_RESOURCE_OPTIONS *options)
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 }
 
-void CtrlQueue::CreateCtx(UINT ctx_id, UINT context_init)
+bool CtrlQueue::CreateResourceBlob(UINT res_id, UINT ctx_id, VIOGPU_RESOURCE_BLOB_OPTIONS *options, ULONGLONG size)
+{
+    PAGED_CODE();
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
+
+    PGPU_RES_CREATE_BLOB cmd;
+    PGPU_VBUFFER vbuf;
+    cmd = (PGPU_RES_CREATE_BLOB)AllocCmd(&vbuf, sizeof(*cmd));
+    RtlZeroMemory(cmd, sizeof(*cmd));
+
+    cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB;
+    cmd->hdr.ctx_id = ctx_id;
+    cmd->hdr.flags |= VIRTIO_GPU_FLAG_FENCE;
+    cmd->hdr.fence_id = InterlockedIncrement64(&m_FenceIdr/*[ring_idx]*/);
+    cmd->resource_id = res_id;
+    cmd->blob_mem = options->blob_mem;
+    cmd->blob_flags = options->blob_flags;
+    cmd->blob_id = options->blob_id;
+    cmd->size = size;
+
+    // TODO
+    cmd->nr_entries = 0;
+
+    KEVENT event;
+    NTSTATUS status;
+    KeInitializeEvent(&event, NotificationEvent, FALSE);
+    vbuf->complete_cb = NotifyEventCompleteCB;
+    vbuf->complete_ctx = &event;
+    vbuf->auto_release = false;
+
+    LARGE_INTEGER timeout = {0};
+    timeout.QuadPart = Int32x32To64(1000, -10000);
+
+    // FIXME!!! if
+    QueueBuffer(vbuf);
+
+    status = KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, &timeout);
+
+    if (status == STATUS_TIMEOUT)
+    {
+        DbgPrint(TRACE_LEVEL_FATAL, ("---> Failed to create blob (timeout)\n"));
+        VioGpuDbgBreak();
+        return FALSE;
+    }
+
+    PGPU_CTRL_HDR resp = (PGPU_CTRL_HDR)vbuf->resp_buf;
+
+    bool error = resp->type >= VIRTIO_GPU_RESP_ERR_UNSPEC;
+
+    ReleaseBuffer(vbuf);
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
+    return !error;
+}
+
+void CtrlQueue::CreateCtx(UINT ctx_id, UINT context_init, UCHAR device_name[64])
 {
     PAGED_CODE();
 
@@ -481,8 +537,9 @@ void CtrlQueue::CreateCtx(UINT ctx_id, UINT context_init)
 
     cmd->hdr.type = VIRTIO_GPU_CMD_CTX_CREATE;
     cmd->hdr.ctx_id = ctx_id;
-    cmd->nlen = 0;
+    cmd->nlen = (ULONG) strnlen_s((const char *) device_name, 64);
     cmd->context_init = context_init;
+    memcpy(cmd->debug_name, device_name, cmd->nlen);
 
     // FIXME!!! if
     QueueBuffer(vbuf);
@@ -490,7 +547,7 @@ void CtrlQueue::CreateCtx(UINT ctx_id, UINT context_init)
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 }
 
-void CtrlQueue::DestroyCtx(UINT ctx_id)
+void CtrlQueue::DestroyCtx(UINT ctx_id, void (*complete_cb)(void *, void *, void *), void *complete_ctx)
 {
     PAGED_CODE();
 
@@ -502,7 +559,12 @@ void CtrlQueue::DestroyCtx(UINT ctx_id)
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_CTX_DESTROY;
+    cmd->hdr.flags |= VIRTIO_GPU_FLAG_FENCE;
+    cmd->hdr.fence_id = InterlockedIncrement64(&m_FenceIdr/*[0]*/);
     cmd->hdr.ctx_id = ctx_id;
+
+    vbuf->complete_cb = complete_cb;
+    vbuf->complete_ctx = complete_ctx;
 
     // FIXME!!! if
     QueueBuffer(vbuf);
@@ -614,6 +676,8 @@ void CtrlQueue::CtxResource(bool attach, UINT ctx_id, UINT res_id)
 
     cmd->hdr.type = attach ? VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE : VIRTIO_GPU_CMD_CTX_DETACH_RESOURCE;
     cmd->hdr.ctx_id = ctx_id;
+    cmd->hdr.flags |= VIRTIO_GPU_FLAG_FENCE;
+    cmd->hdr.fence_id = InterlockedIncrement64(&m_FenceIdr/*[ring_idx]*/);
     cmd->resource_id = res_id;
 
     QueueBuffer(vbuf);
@@ -621,7 +685,7 @@ void CtrlQueue::CtxResource(bool attach, UINT ctx_id, UINT res_id)
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 }
 
-void CtrlQueue::SubmitCommand(void *cmdbuf, ULONG size, ULONG ctx_id, void (*complete_cb)(void *), void *complete_ctx)
+void CtrlQueue::SubmitCommand(void *cmdbuf, ULONG size, ULONG ctx_id, BOOL has_ring, ULONG ring_idx, void (*complete_cb)(void *, void *, void *), void *complete_ctx)
 {
     PAGED_CODE();
 
@@ -636,7 +700,15 @@ void CtrlQueue::SubmitCommand(void *cmdbuf, ULONG size, ULONG ctx_id, void (*com
     cmd->size = size;
 
     cmd->hdr.flags |= VIRTIO_GPU_FLAG_FENCE;
-    cmd->hdr.fence_id = InterlockedIncrement(&m_FenceIdr);
+    if (has_ring) {
+        cmd->hdr.flags |= VIRTIO_GPU_FLAG_RING_IDX;
+        cmd->hdr.ring_idx = (UCHAR) ring_idx;
+    } else {
+        // assert(ring_idx == 0);
+        ring_idx = 0;
+    }
+
+    cmd->hdr.fence_id = InterlockedIncrement64(&m_FenceIdr/*[ring_idx]*/);
     cmd->hdr.ctx_id = ctx_id;
 
     vbuf->data_buf = cmdbuf;
@@ -652,8 +724,10 @@ void CtrlQueue::SubmitCommand(void *cmdbuf, ULONG size, ULONG ctx_id, void (*com
 
 void CtrlQueue::TransferHostCmd(bool to_host,
                                 ULONG ctx_id,
+                                BOOL has_ring,
+                                ULONG ring_idx,
                                 VIOGPU_TRANSFER_CMD *options,
-                                void (*complete_cb)(void *),
+                                void (*complete_cb)(void *, void *, void *),
                                 void *complete_ctx)
 {
     PAGED_CODE();
@@ -682,9 +756,68 @@ void CtrlQueue::TransferHostCmd(bool to_host,
     cmd->layer_stride = options->layer_stride;
 
     cmd->hdr.flags |= VIRTIO_GPU_FLAG_FENCE;
-    cmd->hdr.fence_id = InterlockedIncrement(&m_FenceIdr);
+    if (has_ring) {
+        cmd->hdr.flags |= VIRTIO_GPU_FLAG_RING_IDX;
+        cmd->hdr.ring_idx = (UCHAR) ring_idx;
+    } else {
+        // assert(ring_idx == 0);
+        ring_idx = 0;
+    }
 
+    cmd->hdr.fence_id = InterlockedIncrement64(&m_FenceIdr/*[ring_idx]*/);
     cmd->hdr.ctx_id = ctx_id;
+
+    vbuf->complete_cb = complete_cb;
+    vbuf->complete_ctx = complete_ctx;
+
+    QueueBuffer(vbuf);
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
+}
+
+void CtrlQueue::ResourceMapBlob(UINT res_id, UINT ctx_id, ULONGLONG offset, void (*complete_cb)(void *, void *, void *), void *complete_ctx)
+{
+    PAGED_CODE();
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s res_id=%d offset=%llx\n", __FUNCTION__, res_id, offset));
+
+    PGPU_RES_MAP_BLOB cmd;
+    PGPU_VBUFFER vbuf;
+    cmd = (PGPU_RES_MAP_BLOB)AllocCmdResp(&vbuf, sizeof(*cmd), NULL, sizeof(GPU_RESP_MAP_INFO));
+
+    RtlZeroMemory(cmd, sizeof(*cmd));
+
+    cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB;
+    cmd->hdr.flags |= VIRTIO_GPU_FLAG_FENCE;
+    cmd->hdr.fence_id = InterlockedIncrement64(&m_FenceIdr/*[0]*/);
+    cmd->hdr.ctx_id = ctx_id;
+    cmd->resource_id = res_id;
+    cmd->offset = offset;
+
+    vbuf->complete_cb = complete_cb;
+    vbuf->complete_ctx = complete_ctx;
+
+    QueueBuffer(vbuf);
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
+}
+
+void CtrlQueue::ResourceUnmapBlob(UINT res_id, UINT ctx_id, void (*complete_cb)(void *, void *, void *), void *complete_ctx)
+{
+    PAGED_CODE();
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
+
+    PGPU_RES_UNMAP_BLOB cmd;
+    PGPU_VBUFFER vbuf;
+    cmd = (PGPU_RES_UNMAP_BLOB)AllocCmd(&vbuf, sizeof(*cmd));
+    RtlZeroMemory(cmd, sizeof(*cmd));
+
+    cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNMAP_BLOB;
+    cmd->hdr.flags |= VIRTIO_GPU_FLAG_FENCE;
+    cmd->hdr.fence_id = InterlockedIncrement64(&m_FenceIdr/*[0]*/);
+    cmd->hdr.ctx_id = ctx_id;
+    cmd->resource_id = res_id;
 
     vbuf->complete_cb = complete_cb;
     vbuf->complete_ctx = complete_ctx;
@@ -696,7 +829,7 @@ void CtrlQueue::TransferHostCmd(bool to_host,
 
 PAGED_CODE_SEG_END
 
-void CtrlQueue::DestroyResource(UINT res_id)
+void CtrlQueue::DestroyResource(UINT res_id, void (*complete_cb)(void *, void *, void *), void *complete_ctx)
 {
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
 
@@ -706,7 +839,12 @@ void CtrlQueue::DestroyResource(UINT res_id)
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
+    cmd->hdr.flags |= VIRTIO_GPU_FLAG_FENCE;
+    cmd->hdr.fence_id = InterlockedIncrement64(&m_FenceIdr/*[0]*/);
     cmd->resource_id = res_id;
+
+    vbuf->complete_cb = complete_cb;
+    vbuf->complete_ctx = complete_ctx;
 
     QueueBuffer(vbuf);
 
@@ -778,6 +916,33 @@ void CtrlQueue::SetScanout(UINT scan_id, UINT res_id, UINT width, UINT height, U
     cmd->r.height = height;
     cmd->r.x = x;
     cmd->r.y = y;
+
+    // FIXME if
+    QueueBuffer(vbuf);
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
+}
+
+void CtrlQueue::SetScanoutBlob(UINT scan_id, UINT res_id, GPU_RECT rect, VIOGPU_BLOB_INFO info)
+{
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
+
+    PGPU_SET_SCANOUT_BLOB cmd;
+    PGPU_VBUFFER vbuf;
+    cmd = (PGPU_SET_SCANOUT_BLOB)AllocCmd(&vbuf, sizeof(*cmd));
+    RtlZeroMemory(cmd, sizeof(*cmd));
+
+    cmd->hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT_BLOB;
+    cmd->resource_id = res_id;
+    cmd->scanout_id = scan_id;
+    cmd->r = rect;
+    cmd->width = info.width;
+    cmd->height = info.height;
+    cmd->format = info.format;
+    for (UINT i = 0; i < 4; i++) {
+        cmd->strides[i] = info.strides[i];
+        cmd->offsets[i] = info.offsets[i];
+    }
 
     // FIXME if
     QueueBuffer(vbuf);
@@ -1156,9 +1321,12 @@ BOOLEAN VioGpuMemSegment::Init(_In_ UINT size, _In_opt_ PPHYSICAL_ADDRESS pPAddr
     UINT sglsize = sizeof(SCATTER_GATHER_LIST) + (sizeof(SCATTER_GATHER_ELEMENT) * pages);
     size = pages * PAGE_SIZE;
 
+    DbgPrint(TRACE_LEVEL_WARNING, ("%s mapping 0x%llx - %u\n", __FUNCTION__, pPAddr->QuadPart, size));
+
     if ((pPAddr == NULL) || pPAddr->QuadPart == 0LL)
     {
         m_pVAddr = new (NonPagedPoolNx) BYTE[size];
+        DbgPrint(TRACE_LEVEL_WARNING, ("%s using malloc\n", __FUNCTION__));
 
         if (!m_pVAddr)
         {
@@ -1170,6 +1338,8 @@ BOOLEAN VioGpuMemSegment::Init(_In_ UINT size, _In_opt_ PPHYSICAL_ADDRESS pPAddr
     }
     else
     {
+        DbgPrint(TRACE_LEVEL_WARNING, ("%s using physical memory\n", __FUNCTION__));
+
         NTSTATUS Status = MapFrameBuffer(*pPAddr, size, &m_pVAddr);
         if (!NT_SUCCESS(Status))
         {

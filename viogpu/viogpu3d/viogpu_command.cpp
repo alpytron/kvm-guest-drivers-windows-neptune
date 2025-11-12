@@ -8,11 +8,11 @@
 
 VioGpuCommand::VioGpuCommand(VioGpuAdapter *adapter)
 {
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     m_pAdapter = adapter;
     m_pCommander = &adapter->commander;
-    m_pContext = NULL;
+    m_pDevice = NULL;
 
     m_FenceId = 0;
     m_pDmaBuffer = NULL;
@@ -36,7 +36,7 @@ void VioGpuCommand::PrepareSubmit(const DXGKARG_SUBMITCOMMAND *pSubmitCommand)
         m_pCommand = (char *)m_pDmaBuffer + pSubmitCommand->DmaBufferSubmissionStartOffset;
         m_pEnd = (char *)m_pDmaBuffer + pSubmitCommand->DmaBufferSubmissionEndOffset;
     }
-    m_pContext = reinterpret_cast<VioGpuDevice *>(pSubmitCommand->hContext);
+    m_pDevice = VioGpuDevice::FromHandle(pSubmitCommand->hContext);
 }
 
 #pragma code_seg(pop)
@@ -46,7 +46,7 @@ PAGED_CODE_SEG_BEGIN
 void VioGpuCommand::Run()
 {
     PAGED_CODE();
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     while (m_pCommand < m_pEnd)
     {
@@ -57,7 +57,7 @@ void VioGpuCommand::Run()
         void *cmdBody = m_pCommand;
         m_pCommand += cmdHdr->size;
 
-        DbgPrint(TRACE_LEVEL_VERBOSE, ("%s fence_id=%d running command=%d", __FUNCTION__, m_FenceId, cmdHdr->type));
+        DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s fence_id=%d running command=%d\n", __FUNCTION__, m_FenceId, cmdHdr->type));
 
         switch (cmdHdr->type)
         {
@@ -66,9 +66,13 @@ void VioGpuCommand::Run()
                     PBYTE submitCmd = new (NonPagedPoolNx) BYTE[cmdHdr->size];
                     RtlCopyMemory(submitCmd, cmdBody, cmdHdr->size);
 
+
+
                     m_pAdapter->ctrlQueue.SubmitCommand(submitCmd,
                                                         cmdHdr->size,
-                                                        m_pContext->GetId(),
+                                                        (cmdHdr->flags & VIOGPU_EXECBUF_VIRGL) != 0 ? m_pDevice->m_Virgl.GetId() : m_pDevice->m_Context.GetId(),
+                                                        (cmdHdr->flags & VIOGPU_EXECBUF_RING_IDX) != 0,
+                                                        cmdHdr->ring_idx,
                                                         VioGpuCommand::QueueRunningCb,
                                                         this);
                     return;
@@ -80,10 +84,62 @@ void VioGpuCommand::Run()
                     VIOGPU_TRANSFER_CMD *transferCmd = (VIOGPU_TRANSFER_CMD *)cmdBody;
 
                     m_pAdapter->ctrlQueue.TransferHostCmd(cmdHdr->type == VIOGPU_CMD_TRANSFER_TO_HOST,
-                                                          m_pContext->GetId(),
+                                                          (cmdHdr->flags & VIOGPU_EXECBUF_VIRGL) != 0 ? m_pDevice->m_Virgl.GetId() : m_pDevice->m_Context.GetId(),
+                                                          false,
+                                                          0,
                                                           transferCmd,
                                                           VioGpuCommand::QueueRunningCb,
                                                           this);
+                    return;
+                }
+
+            case VIOGPU_CMD_MAP_BLOB:
+            case VIOGPU_CMD_UNMAP_BLOB:
+                {
+                    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s fence_id=%d running map/unmap blob, next=%d, curr=%p, end=%p\n", __FUNCTION__, m_FenceId, ((VIOGPU_COMMAND_HDR *)m_pCommand)->type, m_pCommand, m_pEnd));
+
+                    ULONG *map_idx = (ULONG *)cmdBody;
+
+                    size_t num_maps = cmdHdr->size / sizeof(ULONG);
+
+                    for (size_t i = 0; i < num_maps; i++) {
+                        if (map_idx[i] >= m_allocationsLength)
+                        {
+                            DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s fence_id=%d map/unmap blob %d: invalid index=%u\n", __FUNCTION__, m_FenceId, i, map_idx[i]));
+                            goto end;
+                        }
+                        if (m_allocations[map_idx[i]] == NULL)
+                        {
+                            DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s fence_id=%d map/unmap blob %d: allocation %d is NULL\n", __FUNCTION__, m_FenceId, i, map_idx[i]));
+                            goto end;
+                        }
+                        if (!m_allocations[map_idx[i]]->IsBlob())
+                        {
+                            DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s fence_id=%d map/unmap blob %d: allocation %d is not blob\n", __FUNCTION__, m_FenceId, i, map_idx[i]));
+                            goto end;
+                        }
+
+                    }
+
+                    for (size_t i = 0; i < num_maps; i++) {
+                        VioGpuAllocation *allocation = m_allocations[map_idx[i]];
+                        if (!allocation->IsMappable()) {
+                            DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s fence_id=%d res_id=%d cannot map unmappable blob (flags=%d)\n", __FUNCTION__, m_FenceId, allocation->GetId(), allocation->m_Blob.Options.blob_flags));
+                            goto end;
+                        }
+
+                        if (cmdHdr->type == VIOGPU_CMD_MAP_BLOB && !allocation->IsMapped()) {
+                            DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s fence_id=%d running map blob res_id=%d\n", __FUNCTION__, m_FenceId, allocation->GetId()));
+                            allocation->MapBlob(m_pDevice->m_Context.GetId(),
+                                                i == num_maps - 1 ? VioGpuCommand::QueueRunningCb : NULL,
+                                                i == num_maps - 1 ? this : NULL);
+                        } else if (cmdHdr->type == VIOGPU_CMD_UNMAP_BLOB && allocation->IsMapped()) {
+                            DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s fence_id=%d running unmap blob res_id=%d\n", __FUNCTION__, m_FenceId, allocation->GetId()));
+                            allocation->UnmapBlob(m_pDevice->m_Context.GetId(),
+                                                i == num_maps - 1 ? VioGpuCommand::QueueRunningCb : NULL,
+                                                i == num_maps - 1 ? this : NULL);
+                        }
+                    }
                     return;
                 }
 
@@ -96,7 +152,8 @@ void VioGpuCommand::Run()
         }
     }
 
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("%s finished fence_id=%d", __FUNCTION__, m_FenceId));
+end:
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s finished fence_id=%d, this=%p, m_pAdapter=%p\n", __FUNCTION__, m_FenceId, this, m_pAdapter));
 
     if (m_allocations)
     {
@@ -119,19 +176,21 @@ void VioGpuCommand::Run()
 
     m_pCommander->CommandFinished();
 
+    InterlockedExchange(&m_pAdapter->m_LastCompletedFenceId, m_FenceId);
+
     delete this;
 }
 
 void VioGpuCommand::AttachAllocations(DXGK_ALLOCATIONLIST *allocationList, UINT allocationListLength)
 {
     PAGED_CODE();
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     m_allocations = new (NonPagedPoolNx) VioGpuAllocation *[allocationListLength];
     m_allocationsLength = allocationListLength;
     for (UINT i = 0; i < allocationListLength; i++)
     {
-        VioGpuDeviceAllocation *deviceAllocation = reinterpret_cast<VioGpuDeviceAllocation *>(allocationList[i].hDeviceSpecificAllocation);
+        VioGpuDeviceAllocation *deviceAllocation = VioGpuDeviceAllocation::FromHandle(allocationList[i].hDeviceSpecificAllocation);
         if (deviceAllocation)
         {
             m_allocations[i] = deviceAllocation->GetAllocation();
@@ -154,7 +213,7 @@ void VioGpuCommand::QueueRunning()
     m_pCommander->QueueRunning(this);
 }
 
-void VioGpuCommand::QueueRunningCb(void *cmd)
+void VioGpuCommand::QueueRunningCb(void *cmd, void *, void *)
 {
     ((VioGpuCommand *)cmd)->QueueRunning();
 }
@@ -166,7 +225,7 @@ PAGED_CODE_SEG_BEGIN
 VioGpuCommander::VioGpuCommander(VioGpuAdapter *pAdapter)
 {
     PAGED_CODE();
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     m_pAdapter = pAdapter;
     m_bStopWorkThread = FALSE;
@@ -184,7 +243,7 @@ VioGpuCommander::VioGpuCommander(VioGpuAdapter *pAdapter)
 NTSTATUS VioGpuCommander::Start()
 {
     PAGED_CODE();
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     HANDLE threadHandle = 0;
 
@@ -213,7 +272,7 @@ NTSTATUS VioGpuCommander::Start()
 void VioGpuCommander::Stop()
 {
     PAGED_CODE();
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     LARGE_INTEGER timeout = {0};
     timeout.QuadPart = Int32x32To64(1000, -10000);
@@ -239,7 +298,7 @@ void VioGpuCommander::ThreadWork(PVOID Context)
 void VioGpuCommander::ThreadWorkRoutine(void)
 {
     PAGED_CODE();
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     KeSetPriorityThread(KeGetCurrentThread(), LOW_REALTIME_PRIORITY);
 
@@ -292,7 +351,25 @@ NTSTATUS VioGpuCommander::Patch(const DXGKARG_PATCH *pPatch)
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s \n", __FUNCTION__));
 
-    UNREFERENCED_PARAMETER(pPatch);
+    VioGpuDevice *pDevice = VioGpuDevice::FromHandle(pPatch->hContext);
+
+    for (UINT i = 0; i < pPatch->AllocationListSize; i++)
+    {
+        const DXGK_ALLOCATIONLIST *allocList = &pPatch->pAllocationList[i];
+        VioGpuDeviceAllocation *deviceAllocation = VioGpuDeviceAllocation::FromHandle(allocList->hDeviceSpecificAllocation);
+        VioGpuAllocation *allocation = deviceAllocation ? deviceAllocation->GetAllocation() : nullptr;
+        if (allocation && allocation->IsBlob())
+        {
+
+            allocation->m_Blob.MapOffset = allocList->PhysicalAddress.QuadPart - VioGpuAdapter::SHMEM_GPU_BASE_VA;
+            DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s res_id=%d base=%p addr=%p off=%llx\n",
+                                           __FUNCTION__,
+                                           allocation->GetId(),
+                                           pDevice->m_pAdapter->GetShmemPA(),
+                                           allocList->PhysicalAddress.QuadPart,
+                                           allocation->m_Blob.MapOffset));
+        }
+    }
 
     return STATUS_SUCCESS;
 }
@@ -310,11 +387,7 @@ NTSTATUS VioGpuCommander::SubmitCommand(const DXGKARG_SUBMITCOMMAND *pSubmitComm
     VioGpuCommand *cmd = NULL;
     if (pSubmitCommand->pDmaBufferPrivateData)
     {
-        VioGpuCommand **priv = (VioGpuCommand **)pSubmitCommand->pDmaBufferPrivateData;
-        if (*priv != NULL)
-        {
-            cmd = *priv;
-        }
+        cmd = VioGpuCommand::FromHandle(*(void **)pSubmitCommand->pDmaBufferPrivateData);
     }
 
     if (!cmd)

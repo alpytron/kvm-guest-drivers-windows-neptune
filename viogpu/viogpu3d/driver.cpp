@@ -59,7 +59,7 @@ void InitializeDebugPrints(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING Re
     bDebugPrint = 1;
     virtioDebugLevel = 0x5;
     bBreakAlways = 1;
-    nDebugLevel = TRACE_LEVEL_WARNING;
+    nDebugLevel = TRACE_LEVEL_INFORMATION;
 #if defined(COM_DEBUG)
     VirtioDebugPrintProc = DebugPrintFuncSerial;
 #elif defined(PRINT_DEBUG)
@@ -107,6 +107,9 @@ extern "C" NTSTATUS DriverEntry(_In_ DRIVER_OBJECT *pDriverObject, _In_ UNICODE_
     InitialData.DxgkDdiDestroyAllocation = VioGpu3DDestroyAllocation;
     InitialData.DxgkDdiGetStandardAllocationDriverData = VioGpu3DGetStandardAllocationDriverData;
     InitialData.DxgkDdiBuildPagingBuffer = VioGpu3DBuildPagingBuffer;
+
+    // InitialData.DxgkDdiAcquireSwizzlingRange = VioGpu3DAcquireSwizzlingRange;
+    // InitialData.DxgkDdiReleaseSwizzlingRange = VioGpu3DReleaseSwizzlingRange;
 
     InitialData.DxgkDdiCreateContext = VioGpu3DDdiCreateContext;
     InitialData.DxgkDdiDestroyContext = VioGpu3DDdiDestroyContext;
@@ -198,7 +201,7 @@ VioGpu3DAddDevice(_In_ DEVICE_OBJECT *pPhysicalDeviceObject, _Outptr_ PVOID *ppD
         return STATUS_NO_MEMORY;
     }
 
-    *ppDeviceContext = pAdapter;
+    *ppDeviceContext = pAdapter->ToHandle();
 
     DbgPrint(TRACE_LEVEL_FATAL, ("<--- %s ppDeviceContext = %p\n", __FUNCTION__, pAdapter));
     return STATUS_SUCCESS;
@@ -210,7 +213,7 @@ VioGpu3DRemoveDevice(_In_ VOID *pDeviceContext)
     PAGED_CODE();
     DbgPrint(TRACE_LEVEL_FATAL, ("---> %s 0x%p\n", __FUNCTION__, pDeviceContext));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
 
     if (pAdapter)
     {
@@ -229,10 +232,10 @@ VioGpu3DStartDevice(_In_ VOID *pDeviceContext,
                     _Out_ ULONG *pNumberOfChildren)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
     return pAdapter->StartDevice(pDxgkStartInfo, pDxgkInterface, pNumberOfViews, pNumberOfChildren);
 }
 
@@ -240,10 +243,10 @@ NTSTATUS
 VioGpu3DStopDevice(_In_ VOID *pDeviceContext)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_INFORMATION, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
     return pAdapter->StopDevice();
 }
 
@@ -253,10 +256,11 @@ VioGpu3DDispatchIoRequest(_In_ VOID *pDeviceContext,
                           _In_ VIDEO_REQUEST_PACKET *pVideoRequestPacket)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         VIOGPU_LOG_ASSERTION1("VioGpuAdapter (0x%I64x) is being called when not active!", pAdapter);
@@ -272,10 +276,11 @@ VioGpu3DSetPowerState(_In_ VOID *pDeviceContext,
                       _In_ POWER_ACTION ActionType)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         return STATUS_SUCCESS;
@@ -289,10 +294,11 @@ VioGpu3DQueryChildRelations(_In_ VOID *pDeviceContext,
                             _In_ ULONG ChildRelationsSize)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     return pAdapter->QueryChildRelations(pChildRelations, ChildRelationsSize);
 }
 
@@ -302,10 +308,11 @@ VioGpu3DQueryChildStatus(_In_ VOID *pDeviceContext,
                          _In_ BOOLEAN NonDestructiveOnly)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     return pAdapter->QueryChildStatus(pChildStatus, NonDestructiveOnly);
 }
 
@@ -315,10 +322,10 @@ VioGpu3DQueryDeviceDescriptor(_In_ VOID *pDeviceContext,
                               _Inout_ DXGK_DEVICE_DESCRIPTOR *pDeviceDescriptor)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
     if (!pAdapter->IsDriverActive())
     {
         DbgPrint(TRACE_LEVEL_WARNING, ("VIOGPU (%p) is being called when not active!", pAdapter));
@@ -332,10 +339,11 @@ APIENTRY
 VioGpu3DQueryAdapterInfo(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_QUERYADAPTERINFO *pQueryAdapterInfo)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     return pAdapter->QueryAdapterInfo(pQueryAdapterInfo);
 }
 
@@ -351,6 +359,11 @@ VioGpu3DDdiGetNodeMetadata(_In_ CONST HANDLE hAdapter,
     UNREFERENCED_PARAMETER(hAdapter);
     UNREFERENCED_PARAMETER(NodeOrdinal);
 
+    if (NodeOrdinal >= 1)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     pGetNodeMetadata->EngineType = DXGK_ENGINE_TYPE_3D;
     pGetNodeMetadata->Flags.Value = 0;
 
@@ -362,11 +375,12 @@ APIENTRY
 VioGpu3DSetPointerPosition(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_SETPOINTERPOSITION *pSetPointerPosition)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     UNREFERENCED_PARAMETER(pSetPointerPosition);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         DbgPrint(TRACE_LEVEL_ERROR, ("VioGpu (%p) is being called when not active!", pAdapter));
@@ -381,11 +395,12 @@ APIENTRY
 VioGpu3DSetPointerShape(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     UNREFERENCED_PARAMETER(pSetPointerShape);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         DbgPrint(TRACE_LEVEL_ERROR,
@@ -400,10 +415,11 @@ APIENTRY
 VioGpu3DEscape(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_ESCAPE *pEscape)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         DbgPrint(TRACE_LEVEL_ERROR,
@@ -418,10 +434,11 @@ APIENTRY
 VioGpu3DCreateAllocation(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_CREATEALLOCATION *pCreateAllocation)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         DbgPrint(TRACE_LEVEL_ERROR,
@@ -439,7 +456,7 @@ VioGpu3DDescribeAllocation(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_DESCRIBEA
     VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAllocation *pAllocation = reinterpret_cast<VioGpuAllocation *>(pDescribeAllocation->hAllocation);
+    VioGpuAllocation *pAllocation = VioGpuAllocation::FromHandle(pDescribeAllocation->hAllocation);
     VIOGPU_ASSERT_CHK(pAllocation != NULL);
 
     return pAllocation->DescribeAllocation(pDescribeAllocation);
@@ -453,7 +470,9 @@ VioGpu3DOpenAllocation(_In_ CONST HANDLE hDevice, _In_ CONST DXGKARG_OPENALLOCAT
     VIOGPU_ASSERT_CHK(hDevice != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuDevice *pDxContext = reinterpret_cast<VioGpuDevice *>(hDevice);
+    VioGpuDevice *pDxContext = VioGpuDevice::FromHandle(hDevice);
+    VIOGPU_ASSERT_CHK(pDxContext != NULL);
+
     return pDxContext->OpenAllocation(pOpenAllocation);
 }
 
@@ -467,10 +486,10 @@ VioGpu3DCloseAllocation(_In_ CONST HANDLE hDevice, _In_ CONST DXGKARG_CLOSEALLOC
 
     for (ULONG i = 0; i < pCloseAllocation->NumAllocations; i++)
     {
-        VioGpuDeviceAllocation *allocation = reinterpret_cast<VioGpuDeviceAllocation *>(pCloseAllocation->pOpenHandleList[i]);
-        if (allocation != NULL)
+        VioGpuDeviceAllocation *pDeviceAllocation = VioGpuDeviceAllocation::FromHandle(pCloseAllocation->pOpenHandleList[i]);
+        if (pDeviceAllocation != NULL)
         {
-            delete allocation;
+            pDeviceAllocation->GetAllocation()->Close(pDeviceAllocation);
         }
     }
 
@@ -487,7 +506,7 @@ VioGpu3DDestroyAllocation(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_DESTROY
 
     for (ULONG i = 0; i < pDestroyAllocation->NumAllocations; i++)
     {
-        VioGpuAllocation *allocation = reinterpret_cast<VioGpuAllocation *>(pDestroyAllocation->pAllocationList[i]);
+        VioGpuAllocation *allocation = VioGpuAllocation::FromHandle(pDestroyAllocation->pAllocationList[i]);
         if (allocation != NULL)
         {
             delete allocation;
@@ -496,7 +515,7 @@ VioGpu3DDestroyAllocation(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_DESTROY
 
     if (pDestroyAllocation->Flags.DestroyResource)
     {
-        VioGpuResource *resource = reinterpret_cast<VioGpuResource *>(pDestroyAllocation->hResource);
+        VioGpuResource *resource = VioGpuResource::FromHandle(pDestroyAllocation->hResource);
         if (resource != NULL)
         {
             delete resource;
@@ -524,8 +543,9 @@ APIENTRY
 VioGpu3DBuildPagingBuffer(_In_ CONST HANDLE hAdapter, _In_ DXGKARG_BUILDPAGINGBUFFER *pBuildPagingBuffer)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     VIOGPU_ASSERT(pBuildPagingBuffer != NULL);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s operation=%d\n", __FUNCTION__, pBuildPagingBuffer->Operation));
 
@@ -540,7 +560,8 @@ VioGpu3DBuildPagingBuffer(_In_ CONST HANDLE hAdapter, _In_ DXGKARG_BUILDPAGINGBU
                     return STATUS_SUCCESS;
                 }
 
-                VioGpuAllocation *allocation = reinterpret_cast<VioGpuAllocation *>(pBuildPagingBuffer->MapApertureSegment.hAllocation);
+                VioGpuAllocation *allocation = VioGpuAllocation::FromHandle(pBuildPagingBuffer->MapApertureSegment.hAllocation);
+                VIOGPU_ASSERT_CHK(allocation != NULL);
                 NTSTATUS Status = allocation->MapApertureSegment(pBuildPagingBuffer);
                 DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s (map aperture segment)\n", __FUNCTION__));
                 return Status;
@@ -554,10 +575,77 @@ VioGpu3DBuildPagingBuffer(_In_ CONST HANDLE hAdapter, _In_ DXGKARG_BUILDPAGINGBU
                     return STATUS_SUCCESS;
                 }
 
-                VioGpuAllocation *allocation = reinterpret_cast<VioGpuAllocation *>(pBuildPagingBuffer->UnmapApertureSegment.hAllocation);
+                VioGpuAllocation *allocation = VioGpuAllocation::FromHandle(pBuildPagingBuffer->UnmapApertureSegment.hAllocation);
+                VIOGPU_ASSERT_CHK(allocation != NULL);
                 NTSTATUS Status = allocation->UnmapApertureSegment(pBuildPagingBuffer);
                 DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s (unmap aperture segment)\n", __FUNCTION__));
                 return Status;
+            }
+        case DXGK_OPERATION_FILL:
+            {
+                if (pBuildPagingBuffer->Fill.hAllocation == NULL)
+                {
+                    DbgPrint(TRACE_LEVEL_ERROR,
+                             ("<--- %s (fill) no allocation specified\n", __FUNCTION__));
+                    return STATUS_SUCCESS;
+                }
+
+
+                VioGpuAllocation *allocation = VioGpuAllocation::FromHandle(pBuildPagingBuffer->Fill.hAllocation);
+                VIOGPU_ASSERT_CHK(allocation != NULL);
+                DbgPrint(TRACE_LEVEL_WARNING, ("<--- %s (fill size=%zu pattern=%x segment=%d addr=%p) res_id=%d isBlob=%d\n",
+                                               __FUNCTION__,
+                                               pBuildPagingBuffer->Fill.FillSize,
+                                               pBuildPagingBuffer->Fill.FillPattern,
+                                               pBuildPagingBuffer->Fill.Destination.SegmentId,
+                                               pBuildPagingBuffer->Fill.Destination.SegmentAddress.QuadPart,
+                                               allocation->GetId(),
+                                               allocation->IsBlob()));
+
+                return STATUS_SUCCESS;
+            }
+        case DXGK_OPERATION_DISCARD_CONTENT:
+            {
+                if (pBuildPagingBuffer->DiscardContent.hAllocation == NULL)
+                {
+                    DbgPrint(TRACE_LEVEL_ERROR,
+                             ("<--- %s (discard) no allocation specified\n", __FUNCTION__));
+                    return STATUS_SUCCESS;
+                }
+
+
+                VioGpuAllocation *allocation = VioGpuAllocation::FromHandle(pBuildPagingBuffer->DiscardContent.hAllocation);
+                VIOGPU_ASSERT_CHK(allocation != NULL);
+                DbgPrint(TRACE_LEVEL_WARNING, ("<--- %s (discard segment=%d addr=%p) res_id=%d isBlob=%d\n",
+                                               __FUNCTION__,
+                                               pBuildPagingBuffer->DiscardContent.SegmentId,
+                                               pBuildPagingBuffer->DiscardContent.SegmentAddress.QuadPart,
+                                               allocation->GetId(),
+                                               allocation->IsBlob()));
+
+                return STATUS_SUCCESS;
+            }
+        case DXGK_OPERATION_NOTIFY_RESIDENCY:
+            {
+                if (pBuildPagingBuffer->NotifyResidency.hAllocation == NULL)
+                {
+                    DbgPrint(TRACE_LEVEL_ERROR,
+                             ("<--- %s (residency) no allocation specified\n", __FUNCTION__));
+                    return STATUS_SUCCESS;
+                }
+
+                VioGpuAllocation *allocation = VioGpuAllocation::FromHandle(pBuildPagingBuffer->NotifyResidency.hAllocation);
+                VIOGPU_ASSERT_CHK(allocation != NULL);
+                DbgPrint(TRACE_LEVEL_WARNING, ("<--- %s (residency segment=%u padding=%u off=%p resident=%d) res_id=%d isBlob=%d\n",
+                                               __FUNCTION__,
+                                               pBuildPagingBuffer->NotifyResidency.PhysicalAddress.SegmentId,
+                                               pBuildPagingBuffer->NotifyResidency.PhysicalAddress.Padding,
+                                               pBuildPagingBuffer->NotifyResidency.PhysicalAddress.SegmentOffset,
+                                               pBuildPagingBuffer->NotifyResidency.Resident,
+                                               allocation->GetId(),
+                                               allocation->IsBlob()));
+
+                return STATUS_SUCCESS;
             }
         default:
             {
@@ -568,14 +656,48 @@ VioGpu3DBuildPagingBuffer(_In_ CONST HANDLE hAdapter, _In_ DXGKARG_BUILDPAGINGBU
     };
 }
 
+#if 0
+NTSTATUS
+APIENTRY
+VioGpu3DAcquireSwizzlingRange(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_ACQUIRESWIZZLINGRANGE *pAcquireSwizzlingRange)
+{
+    PAGED_CODE();
+    VIOGPU_ASSERT_CHK(hAdapter != NULL);
+    VIOGPU_ASSERT(pAcquireSwizzlingRange != NULL);
+
+    VioGpuAllocation *allocation = reinte rpret_cast<VioGpuAllocation *>(pAcquireSwizzlingRange->hAllocation);
+
+    DbgPrint(TRACE_LEVEL_INFORMATION, ("<---> %s res_id=%d isBlob=%d, \n", __FUNCTION__, allocation->GetId(), allocation->IsBlob()));
+    // TODO: Map blob
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+APIENTRY
+VioGpu3DReleaseSwizzlingRange(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_RELEASESWIZZLINGRANGE *pReleaseSwizzlingRange)
+{
+    PAGED_CODE();
+    VIOGPU_ASSERT_CHK(hAdapter != NULL);
+    VIOGPU_ASSERT(pReleaseSwizzlingRange != NULL);
+
+    VioGpuAllocation *allocation = reinter pret_cast<VioGpuAllocation *>(pReleaseSwizzlingRange->hAllocation);
+    // TODO: Unmap blob
+    DbgPrint(TRACE_LEVEL_INFORMATION, ("<---> %s res_id=%d isBlob=%d, \n", __FUNCTION__, allocation->GetId(), allocation->IsBlob()));
+
+    return STATUS_SUCCESS;
+}
+#endif
+
 NTSTATUS
 APIENTRY
 VioGpu3DPatch(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_PATCH *pPatch)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         return STATUS_UNSUCCESSFUL;
@@ -587,11 +709,12 @@ NTSTATUS
 APIENTRY
 VioGpu3DSubmitCommand(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_SUBMITCOMMAND *pSubmitCommand)
 {
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     // DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
     // DbgPrint(TRACE_LEVEL_ERROR, ("Fake imp %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         // DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s VioGpu (%p) is being called when not active!\n", __FUNCTION__,
@@ -606,10 +729,11 @@ APIENTRY
 VioGpu3DCreateDevice(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_CREATEDEVICE *pCreateDevice)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         DbgPrint(TRACE_LEVEL_ERROR,
@@ -617,12 +741,14 @@ VioGpu3DCreateDevice(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_CREATEDEVICE *p
         return STATUS_UNSUCCESSFUL;
     }
 
-    pCreateDevice->hDevice = new (NonPagedPoolNx) VioGpuDevice(pAdapter);
-    if (!pCreateDevice->hDevice)
+    VioGpuDevice *pDevice = new (NonPagedPoolNx) VioGpuDevice(pAdapter);
+    if (!pDevice)
     {
         DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s failed to allocate VioGpuDevice\n", __FUNCTION__));
         return STATUS_NO_MEMORY;
     }
+    pCreateDevice->hDevice = pDevice->ToHandle();
+
 
     return STATUS_SUCCESS;
 }
@@ -634,7 +760,7 @@ VioGpu3DDestroyDevice(_In_ VOID *pDeviceContext)
     PAGED_CODE();
     DbgPrint(TRACE_LEVEL_FATAL, ("---> %s 0x%p\n", __FUNCTION__, pDeviceContext));
 
-    VioGpuDevice *pDxContext = reinterpret_cast<VioGpuDevice *>(pDeviceContext);
+    VioGpuDevice *pDxContext = VioGpuDevice::FromHandle(pDeviceContext);
 
     if (pDxContext)
     {
@@ -653,17 +779,37 @@ VioGpu3DDdiCreateContext(_In_ CONST HANDLE hDevice, _Inout_ DXGKARG_CREATECONTEX
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    // We currently don't have sepraration between context and device
-    pCreateContext->hContext = hDevice;
+    VioGpuDevice *pDevice = VioGpuDevice::FromHandle(hDevice);
+    VIOGPU_ASSERT_CHK(pDevice != NULL);
 
-    pCreateContext->ContextInfo.DmaBufferSegmentSet = 0;
-    pCreateContext->ContextInfo.DmaBufferSize = 256 * 1024;
-    pCreateContext->ContextInfo.DmaBufferPrivateDataSize = 40;
+    if (pCreateContext->Flags.GdiContext || pCreateContext->Flags.SystemContext) {
+        DbgPrint(TRACE_LEVEL_WARNING, ("<---> %s context type: System(%d) GDI(%d) \n",
+                                       __FUNCTION__,
+                                       pCreateContext->Flags.SystemContext,
+                                       pCreateContext->Flags.GdiContext));
 
-    pCreateContext->ContextInfo.AllocationListSize = DXGK_ALLOCATION_LIST_SIZE_GDICONTEXT;
-    pCreateContext->ContextInfo.PatchLocationListSize = DXGK_ALLOCATION_LIST_SIZE_GDICONTEXT;
+        pCreateContext->hContext = pDevice->ToHandle();
 
-    return STATUS_SUCCESS;
+        pCreateContext->ContextInfo.DmaBufferSegmentSet = 0;
+        pCreateContext->ContextInfo.DmaBufferSize = 1024 * 1024;
+        pCreateContext->ContextInfo.DmaBufferPrivateDataSize = 128;
+
+        pCreateContext->ContextInfo.AllocationListSize = DXGK_ALLOCATION_LIST_SIZE_GDICONTEXT;
+        pCreateContext->ContextInfo.PatchLocationListSize = DXGK_ALLOCATION_LIST_SIZE_GDICONTEXT;
+
+        return STATUS_SUCCESS;
+    } else {
+        pCreateContext->hContext = pDevice->ToHandle();
+
+        pCreateContext->ContextInfo.DmaBufferSegmentSet = 0;
+        pCreateContext->ContextInfo.DmaBufferSize = 1024 * 1024;
+        pCreateContext->ContextInfo.DmaBufferPrivateDataSize = 128;
+
+        pCreateContext->ContextInfo.AllocationListSize = 1024;
+        pCreateContext->ContextInfo.PatchLocationListSize = 1024;
+
+        return STATUS_SUCCESS;
+    }
 };
 
 NTSTATUS
@@ -672,35 +818,37 @@ VioGpu3DDdiDestroyContext(_In_ CONST HANDLE hContext)
 {
     PAGED_CODE();
 
-    UNREFERENCED_PARAMETER(hContext);
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
 
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
+    UNREFERENCED_PARAMETER(hContext);
 
     return STATUS_SUCCESS;
 };
 
 NTSTATUS
 APIENTRY
-VioGpu3DPresent(_In_ CONST HANDLE hDevice, _Inout_ DXGKARG_PRESENT *pPresent)
+VioGpu3DPresent(_In_ CONST HANDLE hContext, _Inout_ DXGKARG_PRESENT *pPresent)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hDevice != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuDevice *pDxContext = reinterpret_cast<VioGpuDevice *>(hDevice);
-    return pDxContext->Present(pPresent);
+    VioGpuDevice *pDevice = VioGpuDevice::FromHandle(hContext);
+    VIOGPU_ASSERT_CHK(pDevice != NULL);
+
+    return pDevice->Present(pPresent);
 }
 
 NTSTATUS
 APIENTRY
-VioGpu3DRender(_In_ CONST HANDLE hDevice, _Inout_ DXGKARG_RENDER *pRender)
+VioGpu3DRender(_In_ CONST HANDLE hContext, _Inout_ DXGKARG_RENDER *pRender)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hDevice != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuDevice *pDxContext = reinterpret_cast<VioGpuDevice *>(hDevice);
-    return pDxContext->Render(pRender);
+    VioGpuDevice *pDevice = VioGpuDevice::FromHandle(hContext);
+    VIOGPU_ASSERT_CHK(pDevice != NULL);
+
+    return pDevice->Render(pRender);
 }
 
 NTSTATUS
@@ -710,16 +858,12 @@ VioGpu3DStopDeviceAndReleasePostDisplayOwnership(_In_ VOID *pDeviceContext,
                                                  _Out_ DXGK_DISPLAY_INFORMATION *DisplayInfo)
 {
     PAGED_CODE();
-    NTSTATUS status = STATUS_SUCCESS;
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_INFORMATION, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
-    if (pAdapter)
-    {
-        status = pAdapter->StopDeviceAndReleasePostDisplayOwnership(TargetId, DisplayInfo);
-    }
-    return status;
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
+    return pAdapter->StopDeviceAndReleasePostDisplayOwnership(TargetId, DisplayInfo);
 }
 
 NTSTATUS
@@ -727,10 +871,11 @@ APIENTRY
 VioGpu3DIsSupportedVidPn(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_ISSUPPORTEDVIDPN *pIsSupportedVidPn)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         DbgPrint(TRACE_LEVEL_WARNING, ("VIOGPU (%p) is being called when not active!", pAdapter));
@@ -745,10 +890,11 @@ VioGpu3DRecommendFunctionalVidPn(_In_ CONST HANDLE hAdapter,
                                  _In_ CONST DXGKARG_RECOMMENDFUNCTIONALVIDPN *CONST pRecommendFunctionalVidPn)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         VIOGPU_LOG_ASSERTION1("VIOGPU (%p) is being called when not active!", pAdapter);
@@ -763,10 +909,11 @@ VioGpu3DRecommendVidPnTopology(_In_ CONST HANDLE hAdapter,
                                _In_ CONST DXGKARG_RECOMMENDVIDPNTOPOLOGY *CONST pRecommendVidPnTopology)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         VIOGPU_LOG_ASSERTION1("VIOGPU (%p) is being called when not active!", pAdapter);
@@ -781,10 +928,11 @@ VioGpu3DRecommendMonitorModes(_In_ CONST HANDLE hAdapter,
                               _In_ CONST DXGKARG_RECOMMENDMONITORMODES *CONST pRecommendMonitorModes)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         VIOGPU_LOG_ASSERTION1("VIOGPU (%p) is being called when not active!", pAdapter);
@@ -799,10 +947,11 @@ VioGpu3DEnumVidPnCofuncModality(_In_ CONST HANDLE hAdapter,
                                 _In_ CONST DXGKARG_ENUMVIDPNCOFUNCMODALITY *CONST pEnumCofuncModality)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         VIOGPU_LOG_ASSERTION1("VIOGPU (%p) is being called when not active!", pAdapter);
@@ -817,10 +966,11 @@ VioGpu3DSetVidPnSourceVisibility(_In_ CONST HANDLE hAdapter,
                                  _In_ CONST DXGKARG_SETVIDPNSOURCEVISIBILITY *pSetVidPnSourceVisibility)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         VIOGPU_LOG_ASSERTION1("VIOGPU (%p) is being called when not active!", pAdapter);
@@ -834,10 +984,11 @@ APIENTRY
 VioGpu3DCommitVidPn(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_COMMITVIDPN *CONST pCommitVidPn)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         VIOGPU_LOG_ASSERTION1("VIOGPU (%p) is being called when not active!", pAdapter);
@@ -852,10 +1003,11 @@ VioGpu3DUpdateActiveVidPnPresentPath(_In_ CONST HANDLE hAdapter,
                                      _In_ CONST DXGKARG_UPDATEACTIVEVIDPNPRESENTPATH *CONST pUpdateActiveVidPnPresentPath)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         VIOGPU_LOG_ASSERTION1("VIOGPU (%p) is being called when not active!", pAdapter);
@@ -869,10 +1021,11 @@ APIENTRY
 VioGpu3DQueryVidPnHWCapability(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_QUERYVIDPNHWCAPABILITY *pVidPnHWCaps)
 {
     PAGED_CODE();
-    VIOGPU_ASSERT_CHK(hAdapter != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsDriverActive())
     {
         VIOGPU_LOG_ASSERTION1("VIOGPU (%p) is being called when not active!", pAdapter);
@@ -919,10 +1072,11 @@ VioGpu3DDdiGetScanLine(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_GETSCANLINE *
 
 VOID VioGpu3DDpcRoutine(_In_ VOID *pDeviceContext)
 {
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     if (!pAdapter->IsHardwareInit())
     {
         DbgPrint(TRACE_LEVEL_FATAL, ("VioGpu (%p) is being called when not active!", pAdapter));
@@ -935,10 +1089,11 @@ VOID VioGpu3DDpcRoutine(_In_ VOID *pDeviceContext)
 BOOLEAN
 VioGpu3DInterruptRoutine(_In_ VOID *pDeviceContext, _In_ ULONG MessageNumber)
 {
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     return pAdapter->InterruptRoutine(MessageNumber);
 }
 
@@ -947,7 +1102,9 @@ NTSTATUS VioGpu3DSetVidPnSourceAddress(_In_ CONST HANDLE hAdapter,
 {
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     pAdapter->vidpn.SetVidPnSourceAddress(pSetVidPnSourceAddress);
 
     return STATUS_SUCCESS;
@@ -955,10 +1112,11 @@ NTSTATUS VioGpu3DSetVidPnSourceAddress(_In_ CONST HANDLE hAdapter,
 
 VOID VioGpu3DResetDevice(_In_ VOID *pDeviceContext)
 {
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     pAdapter->ResetDevice();
 }
 
@@ -971,10 +1129,11 @@ VioGpu3DSystemDisplayEnable(_In_ VOID *pDeviceContext,
                             _Out_ UINT *Height,
                             _Out_ D3DDDIFORMAT *ColorFormat)
 {
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     return pAdapter->vidpn.SystemDisplayEnable(TargetId, Flags, Width, Height, ColorFormat);
 }
 
@@ -986,10 +1145,11 @@ VOID APIENTRY VioGpu3DSystemDisplayWrite(_In_ VOID *pDeviceContext,
                                          _In_ UINT PositionX,
                                          _In_ UINT PositionY)
 {
-    VIOGPU_ASSERT_CHK(pDeviceContext != NULL);
     DbgPrint(TRACE_LEVEL_INFORMATION, ("<---> %s\n", __FUNCTION__));
 
-    VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(pDeviceContext);
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(pDeviceContext);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+
     pAdapter->vidpn.SystemDisplayWrite(Source, SourceWidth, SourceHeight, SourceStride, PositionX, PositionY);
 }
 
@@ -1034,10 +1194,15 @@ NTSTATUS
 APIENTRY
 VioGpu3DDdiQueryCurrentFence(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_QUERYCURRENTFENCE *pCurrentFence)
 {
-    UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pCurrentFence);
+    // UNREFERENCED_PARAMETER(hAdapter);
+    // UNREFERENCED_PARAMETER(pCurrentFence);
+    // DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s UNSUPPORTED PREEMPTION FUNCTION\n", __FUNCTION__));
 
-    DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s UNSUPPORTED PREEMPTION FUNCTION\n", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
+
+    VioGpuAdapter *pAdapter = VioGpuAdapter::FromHandle(hAdapter);
+    VIOGPU_ASSERT_CHK(pAdapter != NULL);
+    pCurrentFence->CurrentFence = InterlockedOr(&pAdapter->m_LastCompletedFenceId, 0);
 
     return STATUS_SUCCESS;
 };

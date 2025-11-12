@@ -27,22 +27,26 @@ VioGpu3D_Files.Usermode = 13 ; DriverStore
 [SourceDisksFiles]
 viogpu3d.sys = 1,,f
 viogpu_d3d10.dll = 1,,
-viogpu_wgl.dll = 1,,
+;viogpu_wgl.dll = 1,,
 z.dll = 1,,
+virtio_icd.x86_64.json = 1,,
+vulkan_virtio.dll = 1,,
 
 [Manufacturer]
 %RHEL%=RHEL,NT$ARCH$
 
 [RHEL.NT$ARCH$]
-%VioGpu3D.DeviceDesc% = VioGpu3D_Inst, PCI\VEN_1AF4&DEV_1050&SUBSYS_11001AF4&REV_01
+%VioGpu3D.DeviceDesc% = VioGpu3D_Inst, PCI\VEN_1AF4&DEV_10F7&SUBSYS_11001AF4&REV_01
 
 [VioGpu3D_Files.Driver]
 viogpu3d.sys,,,2
 
 [VioGpu3D_Files.Usermode]
 viogpu_d3d10.dll,,,0
-viogpu_wgl.dll,,,0
-z.dll,,,0
+;viogpu_wgl.dll,,,0
+;z.dll,,,0
+vulkan_virtio.dll,,,0
+virtio_icd.x86_64.json,,,0
 
 [VioGpu3D_Inst]
 Include=msdv.inf
@@ -76,9 +80,8 @@ HKR,, HWCursor,                    %REG_DWORD%, 0
 HKR,, FlexResolution,              %REG_DWORD%, 1
 HKR,, UsePhysicalMemory,           %REG_DWORD%, 0
 HKR,, UserModeDriverName,          %REG_MULTI_SZ%, %13%\viogpu_d3d10.dll,%13%\viogpu_d3d10.dll,%13%\viogpu_d3d10.dll,%13%\viogpu_d3d10.dll
-HKR,, OpenGLDriverName,            %REG_MULTI_SZ%, %13%\viogpu_wgl.dll
-HKR,, OpenGLFlags,                 %REG_DWORD%, 3
-HKR,, OpenGLVersion,               %REG_DWORD%, 4096
+HKR,, VulkanDriverName,            %REG_SZ%,       %13%\virtio_icd.x86_64.json
+
 HKLM,"SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler",EnablePreemption,%REG_DWORD%,0
 HKLM,"SYSTEM\CurrentControlSet\Control\GraphicsDrivers",TdrDebugMode,%REG_DWORD%,1
 
@@ -111,6 +114,7 @@ SERVICE_ERROR_NORMAL = 0x1
 SERVICE_ERROR_SEVERE = 0x2
 SERVICE_ERROR_CRITICAL = 0x3
 
-REG_MULTI_SZ   = 0x00010000
+REG_SZ        = 0x00000000
+REG_MULTI_SZ  = 0x00010000
 REG_EXPAND_SZ = 0x00020000
-REG_DWORD = 0x00010001
+REG_DWORD     = 0x00010001

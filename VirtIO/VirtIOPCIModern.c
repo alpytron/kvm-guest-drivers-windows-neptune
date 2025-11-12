@@ -46,16 +46,39 @@
 #include "VirtIOPCIModern.tmh"
 #endif
 
+static void vio_modern_get_capability_info(VirtIODevice *vdev, int cap_offset, u8 *bar, u64 *off, u64 *len)
+{
+    u8 cap_len;
+    u32 off_lo, len_lo;
+
+    pci_read_config_byte(vdev, cap_offset + offsetof(struct virtio_pci_cap, bar), bar);
+    pci_read_config_dword(vdev, cap_offset + offsetof(struct virtio_pci_cap, offset), &off_lo);
+    pci_read_config_dword(vdev, cap_offset + offsetof(struct virtio_pci_cap, length), &len_lo);
+    pci_read_config_byte(vdev, cap_offset + offsetof(struct virtio_pci_cap, cap_len), &cap_len);
+
+    *off = off_lo;
+    *len = len_lo;
+
+    if (cap_len == sizeof(struct virtio_pci_cap64)) {
+        u32 off_hi, len_hi;
+        pci_read_config_dword(vdev, cap_offset + offsetof(struct virtio_pci_cap64, offset_hi), &off_hi);
+        pci_read_config_dword(vdev, cap_offset + offsetof(struct virtio_pci_cap64, length_hi), &len_hi);
+        *off |= ((u64)off_hi) << 32;
+        *len |= ((u64)len_hi) << 32;
+    }
+}
+
 static void *vio_modern_map_capability(VirtIODevice *vdev, int cap_offset, size_t minlen,
                                        u32 alignment, u32 start, u32 size, size_t *len)
 {
     u8 bar;
-    u32 bar_offset, bar_length;
+
     void *addr;
 
-    pci_read_config_byte(vdev, cap_offset + offsetof(struct virtio_pci_cap, bar), &bar);
-    pci_read_config_dword(vdev, cap_offset + offsetof(struct virtio_pci_cap, offset), &bar_offset);
-    pci_read_config_dword(vdev, cap_offset + offsetof(struct virtio_pci_cap, length), &bar_length);
+    u64 bar_offset;
+    u64 bar_length;
+
+    vio_modern_get_capability_info(vdev, cap_offset, &bar, &bar_offset, &bar_length);
 
     if (start + minlen > bar_length) {
         DPrintf(0, "bar %i cap is not large enough to map %zu bytes at offset %u\n", bar, minlen,
@@ -71,7 +94,7 @@ static void *vio_modern_map_capability(VirtIODevice *vdev, int cap_offset, size_
         return NULL;
     }
 
-    if (bar_length > size) {
+    if (size != 0 && bar_length > size) {
         bar_length = size;
     }
 
@@ -485,11 +508,20 @@ static void find_pci_vendor_capabilities(VirtIODevice *vdev, int *Offsets, size_
 {
     u8 offset = find_first_pci_vendor_capability(vdev);
     while (offset > 0) {
-        u8 cfg_type, bar;
+        u8 cfg_type, bar, cap_len, id;
+        bool valid_cap = true;
         pci_read_config_byte(vdev, offset + offsetof(struct virtio_pci_cap, cfg_type), &cfg_type);
         pci_read_config_byte(vdev, offset + offsetof(struct virtio_pci_cap, bar), &bar);
 
-        if (bar < PCI_TYPE0_ADDRESSES && cfg_type < nOffsets &&
+		if (cfg_type == VIRTIO_PCI_CAP_SHARED_MEMORY_CFG) {
+			pci_read_config_byte(vdev, offset + offsetof(struct virtio_pci_cap, cap_len), &cap_len);
+            pci_read_config_byte(vdev, offset + offsetof(struct virtio_pci_cap, id), &id);
+
+            valid_cap &= cap_len == sizeof(struct virtio_pci_cap64);
+            valid_cap &= id == VIRTIO_GPU_SHM_ID_HOST_VISIBLE;
+        }
+
+        if (bar < PCI_TYPE0_ADDRESSES && cfg_type < nOffsets && valid_cap &&
             pci_get_resource_len(vdev, bar) > 0) {
             Offsets[cfg_type] = offset;
         }
@@ -502,13 +534,13 @@ static void find_pci_vendor_capabilities(VirtIODevice *vdev, int *Offsets, size_
 /* Modern device initialization */
 NTSTATUS vio_modern_initialize(VirtIODevice *vdev)
 {
-    int capabilities[VIRTIO_PCI_CAP_PCI_CFG];
+    int capabilities[VIRTIO_PCI_CAP_VENDOR_CFG];
 
     u32 notify_length;
     u32 notify_offset;
 
     RtlZeroMemory(capabilities, sizeof(capabilities));
-    find_pci_vendor_capabilities(vdev, capabilities, VIRTIO_PCI_CAP_PCI_CFG);
+    find_pci_vendor_capabilities(vdev, capabilities, VIRTIO_PCI_CAP_VENDOR_CFG);
 
     /* Check for a common config, if not found use legacy mode */
     if (!capabilities[VIRTIO_PCI_CAP_COMMON_CFG]) {
@@ -573,6 +605,13 @@ NTSTATUS vio_modern_initialize(VirtIODevice *vdev)
         if (!vdev->config) {
             return STATUS_INVALID_PARAMETER;
         }
+    }
+
+    /* Save host shared memory region if exists */
+    if (capabilities[VIRTIO_PCI_CAP_SHARED_MEMORY_CFG]) {
+        vdev->shmem.available = true;
+        vio_modern_get_capability_info(vdev, capabilities[VIRTIO_PCI_CAP_SHARED_MEMORY_CFG], &vdev->shmem.bar, &vdev->shmem.offset, &vdev->shmem.length);
+        DPrintf(0, "%s(%p): host memory bar %d: %p +0x%llx\n", __FUNCTION__, vdev, vdev->shmem.bar, vdev->shmem.offset, vdev->shmem.length);
     }
 
     vdev->device = &virtio_pci_device_ops;

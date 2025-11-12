@@ -16,6 +16,7 @@ VioGpuVidPN::VioGpuVidPN(VioGpuAdapter *adapter)
     m_pDxgkInterface = adapter->GetDxgkInterface();
 
     RtlZeroMemory(m_CurrentModes, sizeof(m_CurrentModes));
+    RtlZeroMemory(&m_SystemDisplayInfo, sizeof(m_SystemDisplayInfo));
     m_ModeInfo = NULL;
     m_ModeCount = 0;
     m_ModeNumbers = NULL;
@@ -45,12 +46,18 @@ VioGpuVidPN::~VioGpuVidPN()
     m_ModeInfo = NULL;
     m_ModeNumbers = NULL;
 
+    m_shouldFlipStop = true;
+
+    KeWaitForSingleObject(m_pFlipThread, Executive, KernelMode, FALSE, NULL);
+    ObDereferenceObject(m_pFlipThread);
+
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
 }
 
 NTSTATUS VioGpuVidPN::Start(ULONG *pNumberOfViews, ULONG *pNumberOfChildren)
 {
     PAGED_CODE();
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 
     RtlZeroMemory(m_CurrentModes, sizeof(m_CurrentModes));
     m_CurrentModes[0].DispInfo.TargetId = D3DDDI_ID_UNINITIALIZED;
@@ -64,15 +71,19 @@ NTSTATUS VioGpuVidPN::Start(ULONG *pNumberOfViews, ULONG *pNumberOfChildren)
 
     if (m_pAdapter->IsVgaDevice())
     {
+        DbgPrint(TRACE_LEVEL_FATAL, ("%s a VGA device\n", __FUNCTION__));
         Status = AcquirePostDisplayOwnership();
         if (!NT_SUCCESS(Status))
         {
             return STATUS_UNSUCCESSFUL;
         }
+    } else {
+        DbgPrint(TRACE_LEVEL_FATAL, ("%s NOT a VGA device\n", __FUNCTION__));
     }
 
     DbgPrint(TRACE_LEVEL_FATAL,
-             ("DxgkCbAcquirePostDisplayOwnership Width = %d Height = %d Pitch = %d ColorFormat = %d\n",
+             ("%s DxgkCbAcquirePostDisplayOwnership Width = %d Height = %d Pitch = %d ColorFormat = %d\n",
+              __FUNCTION__,
               m_SystemDisplayInfo.Width,
               m_SystemDisplayInfo.Height,
               m_SystemDisplayInfo.Pitch,
@@ -103,8 +114,13 @@ NTSTATUS VioGpuVidPN::Start(ULONG *pNumberOfViews, ULONG *pNumberOfChildren)
         m_CurrentModes[0].DispInfo.PhysicAddress = m_SystemDisplayInfo.PhysicAddress;
     }
 
+#if 1
     *pNumberOfViews = MAX_VIEWS;
     *pNumberOfChildren = MAX_CHILDREN;
+#else
+    *pNumberOfViews = 0;
+    *pNumberOfChildren = 0;
+#endif
 
     DbgPrint(TRACE_LEVEL_INFORMATION,
              ("<--- %s ColorFormat = %d\n", __FUNCTION__, m_CurrentModes[0].DispInfo.ColorFormat));
@@ -117,22 +133,27 @@ NTSTATUS VioGpuVidPN::Start(ULONG *pNumberOfViews, ULONG *pNumberOfChildren)
 
     ZwClose(threadHandle);
 
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
+
     return Status;
 }
 
 NTSTATUS VioGpuVidPN::AcquirePostDisplayOwnership()
 {
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
+
     NTSTATUS Status = m_pDxgkInterface->DxgkCbAcquirePostDisplayOwnership(m_pDxgkInterface->DeviceHandle,
                                                                           &m_SystemDisplayInfo);
     if (!NT_SUCCESS(Status))
     {
         DbgPrint(TRACE_LEVEL_FATAL,
-                 ("DxgkCbAcquirePostDisplayOwnership failed with status 0x%X Width = %d\n",
+                 ("%s DxgkCbAcquirePostDisplayOwnership failed with status 0x%X Width = %d\n",
+                  __FUNCTION__,
                   Status,
                   m_SystemDisplayInfo.Width));
         VioGpuDbgBreak();
     }
-
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
     return Status;
 }
 
@@ -159,7 +180,8 @@ void VioGpuVidPN::ReleasePostDisplayOwnership(D3DDDI_VIDEO_PRESENT_TARGET_ID Tar
     DestroyFrameBufferObj(TRUE);
 
     DbgPrint(TRACE_LEVEL_FATAL,
-             ("StopDeviceAndReleasePostDisplayOwnership Width = %d Height = %d Pitch = %d ColorFormat = %dn",
+             ("%s StopDeviceAndReleasePostDisplayOwnership Width = %d Height = %d Pitch = %d ColorFormat = %dn",
+              __FUNCTION__,
               m_SystemDisplayInfo.Width,
               m_SystemDisplayInfo.Height,
               m_SystemDisplayInfo.Pitch,
@@ -175,6 +197,7 @@ void VioGpuVidPN::Powerdown()
     DestroyFrameBufferObj(TRUE);
     m_CurrentModes[0].Flags.FrameBufferIsActive = FALSE;
     m_CurrentModes[0].FrameBuffer.Ptr = NULL;
+    m_shouldFlipStop = true;
 }
 
 NTSTATUS VioGpuVidPN::CommitVidPn(_In_ CONST DXGKARG_COMMITVIDPN *CONST pCommitVidPn)
@@ -708,14 +731,14 @@ void VioGpuVidPN::DestroyFrameBufferObj(BOOLEAN bReset)
     {
         resid = (UINT)m_pFrameBuf->GetId();
         m_pAdapter->ctrlQueue.DetachBacking(resid);
-        m_pAdapter->ctrlQueue.DestroyResource(resid);
+        m_pAdapter->ctrlQueue.DestroyResource(resid, NotifyResourceDestroyed, &m_pAdapter->resourceIdr);
         if (bReset == TRUE)
         {
             m_pAdapter->ctrlQueue.SetScanout(0, 0, 0, 0, 0, 0);
         }
         delete m_pFrameBuf;
         m_pFrameBuf = NULL;
-        m_pAdapter->resourceIdr.PutId(resid);
+        // m_pAdapter->resourceIdr.PutId(resid);
     }
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 }
@@ -1626,7 +1649,7 @@ VOID VioGpuVidPN::BlackOutScreen(CURRENT_MODE *pCurrentMod)
 
         resid = m_pFrameBuf->GetId();
 
-        // ctrlQueue.TransferToHost2D(resid, 0UL, pCurrentMod->DispInfo.Width, pCurrentMod->DispInfo.Height, 0, 0);
+        // m_pAdapter->ctrlQueue.TransferToHost2D(resid, 0UL, pCurrentMod->DispInfo.Width, pCurrentMod->DispInfo.Height, 0, 0);
         m_pAdapter->ctrlQueue.ResFlush(resid, pCurrentMod->DispInfo.Width, pCurrentMod->DispInfo.Height, 0, 0);
     }
 
@@ -2012,8 +2035,15 @@ PAGED_CODE_SEG_END
 NTSTATUS VioGpuVidPN::SetVidPnSourceAddress(const DXGKARG_SETVIDPNSOURCEADDRESS *pSetVidPnSourceAddress)
 {
     m_sourceAddress = pSetVidPnSourceAddress->PrimaryAddress;
-    m_sourceRes = reinterpret_cast<VioGpuAllocation *>(pSetVidPnSourceAddress->hAllocation);
+    m_sourceRes = VioGpuAllocation::FromHandle(pSetVidPnSourceAddress->hAllocation);
     InterlockedOr(&m_shouldFlip, 1);
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s res_id=%d isBlob=%d, vidPnSrcId=%d, duration=%lld\n",
+                                   __FUNCTION__,
+                                   m_sourceRes->GetId(),
+                                   m_sourceRes->IsBlob(),
+                                   pSetVidPnSourceAddress->VidPnSourceId,
+                                   pSetVidPnSourceAddress->Duration));
 
     return STATUS_SUCCESS;
 };

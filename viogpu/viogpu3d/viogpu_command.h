@@ -1,15 +1,16 @@
 #pragma once
 
-#include "helper.h"
+#include "handle.h"
 
 #define VIOGPU_MAX_RUNNING 1
 
 class VioGpuAdapter;
 class VioGpuDevice;
+class VioGpuContext;
 class VioGpuAllocation;
 class VioGpuCommander;
 
-class VioGpuCommand
+class VioGpuCommand final : public HandleBase<"VIOGCOMM"_M, VioGpuCommand>
 {
   public:
     VioGpuCommand(VioGpuAdapter *adapter);
@@ -18,7 +19,7 @@ class VioGpuCommand
 
     void PrepareSubmit(const DXGKARG_SUBMITCOMMAND *pSubmitCommand);
     void QueueRunning();
-    static void QueueRunningCb(void *cmd);
+    static void QueueRunningCb(void *cmd, void *, void *);
 
     void SetDmaBuf(char *pDmaBuffer)
     {
@@ -32,16 +33,16 @@ class VioGpuCommand
   private:
     VioGpuAdapter *m_pAdapter;
     VioGpuCommander *m_pCommander;
-    VioGpuDevice *m_pContext;
+    VioGpuDevice *m_pDevice;
+
+    VioGpuAllocation **m_allocations;
+    UINT m_allocationsLength;
 
     UINT m_FenceId;
 
     char *m_pDmaBuffer;
     char *m_pCommand;
     char *m_pEnd;
-
-    VioGpuAllocation **m_allocations;
-    UINT m_allocationsLength;
 };
 
 class VioGpuCommander

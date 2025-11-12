@@ -5,14 +5,70 @@
 
 PAGED_CODE_SEG_BEGIN
 
-VioGpuDevice::VioGpuDevice(VioGpuAdapter *pAdapter)
+VioGpuContext::VioGpuContext(VioGpuAdapter *pAdapter) {
+    PAGED_CODE();
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s\n", __FUNCTION__));
+    m_Capset = 0;
+    m_pAdapter = pAdapter;
+    m_id = m_pAdapter->ctxIdr.GetId();
+    m_empty = TRUE;
+}
+
+void VioGpuContext::Init(VIOGPU_CTX_INIT_REQ *pOptions) {
+    PAGED_CODE();
+
+    m_Capset = pOptions->CapsetID;
+
+    if (!m_empty)
+    {
+        DbgPrint(TRACE_LEVEL_WARNING, ("<--> %s UNREACHABLE: do not create context twice! (ctx_id=%d new capset %d, old capset %d, name %s)\n", __FUNCTION__, m_id, pOptions->CapsetID, m_Capset, pOptions->DebugName));
+        m_pAdapter->ctrlQueue.DestroyCtx(m_id, NULL, NULL);
+    }
+    else
+    {
+        DbgPrint(TRACE_LEVEL_WARNING, ("<--> %s (ctx_id=%d capset=%d name=%s)\n", __FUNCTION__, m_id, pOptions->CapsetID, pOptions->DebugName));
+    }
+
+    m_pAdapter->ctrlQueue.CreateCtx(m_id, pOptions->CapsetID, pOptions->DebugName);
+
+    m_empty = FALSE;
+}
+
+PAGED_CODE_SEG_END
+
+#pragma code_seg(push)
+#pragma code_seg()
+
+static void NotifyContextDestroyed(void *ctx, void *cmd, void *)
+{
+    VioGpuIdr *ctxIdr = reinterpret_cast<VioGpuIdr *>(ctx);
+    PGPU_CTRL_HDR cmd_hdr = reinterpret_cast<PGPU_CTRL_HDR>(cmd);
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s freeing ctx %lu\n", __FUNCTION__, cmd_hdr->ctx_id));
+    ctxIdr->PutId(cmd_hdr->ctx_id);
+}
+
+#pragma code_seg(pop)
+
+PAGED_CODE_SEG_BEGIN
+
+VioGpuContext::~VioGpuContext() {
+    PAGED_CODE();
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s\n", __FUNCTION__));
+
+    m_pAdapter->ctrlQueue.DestroyCtx(m_id, NotifyContextDestroyed, &m_pAdapter->ctxIdr);
+    // m_pAdapter->ctxIdr.PutId(m_id);
+}
+
+VioGpuDevice::VioGpuDevice(VioGpuAdapter *pAdapter) : m_Context(pAdapter), m_Virgl(pAdapter)
 {
     PAGED_CODE();
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s\n", __FUNCTION__));
+
+    m_hUM = NULL;
+    m_hKM = NULL;
+    m_pBlit = NULL;
 
     m_pAdapter = pAdapter;
-    m_id = pAdapter->ctxIdr.GetId();
-    pAdapter->ctrlQueue.CreateCtx(m_id, 0);
 }
 
 VioGpuDevice::~VioGpuDevice()
@@ -20,27 +76,19 @@ VioGpuDevice::~VioGpuDevice()
     PAGED_CODE();
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s", __FUNCTION__));
 
-    m_pAdapter->ctrlQueue.DestroyCtx(m_id);
-    m_pAdapter->ctxIdr.PutId(m_id);
+    if (m_hUM) ObDereferenceObject(m_hUM);
+    if (m_hKM) ObDereferenceObject(m_hKM);
 }
 
-NTSTATUS VioGpuDevice::Init(VIOGPU_CTX_INIT_REQ *pOptions)
+NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuDeviceAllocation *srcDev, VioGpuDeviceAllocation *dstDev)
 {
-    PAGED_CODE();
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s", __FUNCTION__));
+    VioGpuAllocation *src = srcDev->GetAllocation();
+    VioGpuAllocation *dst = dstDev->GetAllocation();
 
-    UINT context_init = 0;
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s\n", __FUNCTION__));
 
-    context_init |= pOptions->CapsetID;
+    DbgPrint(TRACE_LEVEL_WARNING, ("<--> %s srcCoherent=%d dstCoherent=%d\n", __FUNCTION__, src->IsCoherent(), dst->IsCoherent()));
 
-    m_pAdapter->ctrlQueue.DestroyCtx(m_id); // Destroy old viogpu context
-    m_pAdapter->ctrlQueue.CreateCtx(m_id, context_init);
-
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuAllocation *src, VioGpuAllocation *dst)
-{
     UCHAR *dmaBuf = (UCHAR *)pPresent->pDmaBuffer;
 
     // Calculate rect covering all SubRectx
@@ -62,6 +110,8 @@ NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuAlloc
         VIOGPU_COMMAND_HDR *cmd_hdr = (VIOGPU_COMMAND_HDR *)dmaBuf;
         cmd_hdr->type = VIOGPU_CMD_TRANSFER_TO_HOST;
         cmd_hdr->size = sizeof(VIOGPU_TRANSFER_CMD);
+        cmd_hdr->flags = 0;
+        cmd_hdr->ring_idx = 0;
         dmaBuf += sizeof(VIOGPU_COMMAND_HDR);
 
         VIOGPU_TRANSFER_CMD *cmdBody = (VIOGPU_TRANSFER_CMD *)dmaBuf;
@@ -82,6 +132,81 @@ NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuAlloc
         cmdBody->offset = 0;
     }
 
+    if (!srcDev->m_AttachedToVirgl)
+    {
+        GetCtrlQueue()->CtxResource(true, m_Virgl.GetId(), src->GetId());
+        srcDev->m_AttachedToVirgl = true;
+
+        if (src->IsBlob())
+        {
+            UINT sizeOfSetType = 4 * (VIRGL_PIPE_RES_SET_TYPE_SIZE(1) + 1);
+
+            VIOGPU_COMMAND_HDR *cmd_hdr = (VIOGPU_COMMAND_HDR *)dmaBuf;
+            cmd_hdr->type = VIOGPU_CMD_SUBMIT;
+            cmd_hdr->size = sizeOfSetType;
+            cmd_hdr->flags = 0;
+            cmd_hdr->ring_idx = 0;
+            dmaBuf += sizeof(VIOGPU_COMMAND_HDR);
+
+            if (!m_Context.IsVirgl())
+            {
+                cmd_hdr->flags |= VIOGPU_EXECBUF_VIRGL;
+            }
+
+            UINT *cmdBody = (UINT *)dmaBuf;
+            dmaBuf += sizeOfSetType;
+
+            cmdBody[0] = VIRGL_CMD0(VIRGL_CCMD_PIPE_RESOURCE_SET_TYPE, 0, VIRGL_PIPE_RES_SET_TYPE_SIZE(1));
+            cmdBody[1] = src->GetId(),
+            cmdBody[2] = src->m_Blob.Info.format;
+            cmdBody[3] = VIRGL_BIND_RENDER_TARGET | /*VIRGL_BIND_LINEAR |*/ VIRGL_BIND_SHARED;
+            cmdBody[4] = src->m_Blob.Info.width;
+            cmdBody[5] = src->m_Blob.Info.height;
+            cmdBody[6] = 0; // usage seems to be ignored
+            cmdBody[7] = 0xFFFFFFFF;
+            cmdBody[8] = 0xFFFFFF;
+            cmdBody[9] = src->m_Blob.Info.strides[0];
+            cmdBody[10] = src->m_Blob.Info.offsets[0];
+        }
+    }
+
+    if (!dstDev->m_AttachedToVirgl)
+    {
+        GetCtrlQueue()->CtxResource(true, m_Virgl.GetId(), dst->GetId());
+        dstDev->m_AttachedToVirgl = true;
+        if (dst->IsBlob())
+        {
+            UINT sizeOfSetType = 4 * (VIRGL_PIPE_RES_SET_TYPE_SIZE(1) + 1);
+
+            VIOGPU_COMMAND_HDR *cmd_hdr = (VIOGPU_COMMAND_HDR *)dmaBuf;
+            cmd_hdr->type = VIOGPU_CMD_SUBMIT;
+            cmd_hdr->size = sizeOfSetType;
+            cmd_hdr->flags = 0;
+            cmd_hdr->ring_idx = 0;
+            dmaBuf += sizeof(VIOGPU_COMMAND_HDR);
+
+            if (!m_Context.IsVirgl())
+            {
+                cmd_hdr->flags |= VIOGPU_EXECBUF_VIRGL;
+            }
+
+            UINT *cmdBody = (UINT *)dmaBuf;
+            dmaBuf += sizeOfSetType;
+
+            cmdBody[0] = VIRGL_CMD0(VIRGL_CCMD_PIPE_RESOURCE_SET_TYPE, 0, VIRGL_PIPE_RES_SET_TYPE_SIZE(1));
+            cmdBody[1] = dst->GetId(),
+            cmdBody[2] = dst->m_Blob.Info.format;
+            cmdBody[3] = VIRGL_BIND_RENDER_TARGET | /*VIRGL_BIND_LINEAR |*/ VIRGL_BIND_SHARED;
+            cmdBody[4] = dst->m_Blob.Info.width;
+            cmdBody[5] = dst->m_Blob.Info.height;
+            cmdBody[6] = 0; // usage seems to be ignored
+            cmdBody[7] = 0xFFFFFFFF;
+            cmdBody[8] = 0xFFFFFF;
+            cmdBody[9] = dst->m_Blob.Info.strides[0];
+            cmdBody[10] = dst->m_Blob.Info.offsets[0];
+        }
+    }
+
     {
         UINT sizeOfOneRect = 4 * (VIRGL_CMD_RESOURCE_COPY_REGION_SIZE + 1);
 
@@ -91,7 +216,13 @@ NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuAlloc
         VIOGPU_COMMAND_HDR *cmd_hdr = (VIOGPU_COMMAND_HDR *)dmaBuf;
         cmd_hdr->type = VIOGPU_CMD_SUBMIT;
         cmd_hdr->size = rectCnt * sizeOfOneRect;
+        cmd_hdr->flags = 0;
+        cmd_hdr->ring_idx = 0;
         dmaBuf += sizeof(VIOGPU_COMMAND_HDR);
+
+        if (!m_Context.IsVirgl()) {
+            cmd_hdr->flags |= VIOGPU_EXECBUF_VIRGL;
+        }
 
         for (UINT i = 0; i < rectCnt; i++)
         {
@@ -123,7 +254,13 @@ NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuAlloc
         VIOGPU_COMMAND_HDR *cmd_hdr = (VIOGPU_COMMAND_HDR *)dmaBuf;
         cmd_hdr->type = VIOGPU_CMD_TRANSFER_FROM_HOST;
         cmd_hdr->size = sizeof(VIOGPU_TRANSFER_CMD);
+        cmd_hdr->flags = 0;
+        cmd_hdr->ring_idx = 0;
         dmaBuf += sizeof(VIOGPU_COMMAND_HDR);
+
+        if (!m_Context.IsVirgl()) {
+            cmd_hdr->flags |= VIOGPU_EXECBUF_VIRGL;
+        }
 
         VIOGPU_TRANSFER_CMD *cmdBody = (VIOGPU_TRANSFER_CMD *)dmaBuf;
         dmaBuf += sizeof(VIOGPU_TRANSFER_CMD);
@@ -148,9 +285,158 @@ NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuAlloc
     return STATUS_SUCCESS;
 }
 
+NTSTATUS VioGpuDevice::GenerateBltPresentUM(DXGKARG_PRESENT *pPresent, VioGpuAllocation *src, VioGpuAllocation *dst)
+{
+    UNREFERENCED_PARAMETER(src);
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s\n", __FUNCTION__));
+
+    if (!CanBlit()) {
+        DbgPrint(TRACE_LEVEL_FATAL, ("<--> %s Invoke VIOGPU_BLIT_INIT escape first\n", __FUNCTION__));
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    VIOGPU_BLIT_PRESENT blit;
+
+    __try
+    {
+        CopyFromUser(&blit, m_pBlit, sizeof(blit));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        DbgPrint(TRACE_LEVEL_FATAL, ("---> %s: Failed to copy from user\n", __FUNCTION__));
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    // Calculate rect covering all SubRectx
+    RECT coverRect = pPresent->pDstSubRects[0];
+    for (UINT i = 1; i < pPresent->SubRectCnt; i++)
+    {
+        coverRect.top = min(coverRect.top, pPresent->pDstSubRects[i].top);
+        coverRect.left = min(coverRect.left, pPresent->pDstSubRects[i].left);
+        coverRect.right = min(coverRect.right, pPresent->pDstSubRects[i].right);
+        coverRect.bottom = min(coverRect.bottom, pPresent->pDstSubRects[i].bottom);
+    }
+
+    if (dst->IsBlob()) {
+        blit.dst.alloc.Type = VIOGPU_RESOURCE_TYPE_BLOB;
+        blit.dst.alloc.OptionsBlob = dst->m_Blob.Options;
+        blit.dst.alloc.Size = dst->m_Size;
+    } else {
+        blit.dst.alloc.Type = VIOGPU_RESOURCE_TYPE_3D;
+        blit.dst.alloc.Options3D = dst->m_3dOptions;
+        blit.dst.alloc.Size = dst->m_Size;
+    }
+    dst->EscapeResourceInfo(&blit.dst.res_info);
+
+    INT dx = pPresent->SrcRect.left - pPresent->DstRect.left;
+    INT dy = pPresent->SrcRect.top - pPresent->DstRect.top;
+
+    for (UINT i = 0; i < pPresent->SubRectCnt; i++)
+    {
+        KeClearEvent(m_hKM);
+        KeClearEvent(m_hUM);
+
+        RECT rect = pPresent->pDstSubRects[i];
+
+        blit.src.rect.left = rect.left + dx;
+        blit.src.rect.right = rect.right + dx;
+        blit.src.rect.top = rect.top + dy;
+        blit.src.rect.bottom = rect.bottom + dy;
+        blit.dst.rect = rect;
+
+        DbgPrint(TRACE_LEVEL_INFORMATION,
+                 ("---> %s: DstRect = {.left = %ld, .top = %ld, .right = %ld, .bottom = %ld}\n",
+                  __FUNCTION__,
+                  blit.dst.rect.left,
+                  blit.dst.rect.top,
+                  blit.dst.rect.right,
+                  blit.dst.rect.bottom));
+
+        DbgPrint(TRACE_LEVEL_INFORMATION,
+                 ("---> %s: SrcRect = {.left = %ld, .top = %ld, .right = %ld, .bottom = %ld}, dx = %d, dy = %d\n",
+                  __FUNCTION__,
+                  blit.src.rect.left,
+                  blit.src.rect.top,
+                  blit.src.rect.right,
+                  blit.src.rect.bottom,
+                  dx, dy));
+
+        __try
+        {
+            CopyToUser(m_pBlit, &blit, sizeof(blit));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            DbgPrint(TRACE_LEVEL_FATAL, ("---> %s: Failed to copy to user\n", __FUNCTION__));
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        /* Blit information set up complete */
+        KeSetEvent(m_hUM, IO_NO_INCREMENT, FALSE);
+        DbgPrint(TRACE_LEVEL_ERROR, ("---> %s: waiting for blit from userspace %p / %p\n", __FUNCTION__, m_hUM, m_hKM));
+
+        LARGE_INTEGER timeout = {0};
+        timeout.QuadPart = Int32x32To64(10000, -10000);
+        /* Waiting for userspace to perform blit */
+        if (!NT_SUCCESS(KeWaitForSingleObject(m_hKM, Executive, KernelMode, FALSE, &timeout))) {
+            DbgPrint(TRACE_LEVEL_FATAL, ("---> %s: TIMEOUT waiting for blit from userspace\n", __FUNCTION__));
+            break;
+        }
+        /* Blit done */
+    }
+
+    KeClearEvent(m_hUM);
+    KeClearEvent(m_hKM);
+
+    if (dst->IsCoherent())
+    {
+        UCHAR *dmaBuf = (UCHAR *)pPresent->pDmaBuffer;
+
+        VIOGPU_COMMAND_HDR *cmd_hdr = (VIOGPU_COMMAND_HDR *)dmaBuf;
+        cmd_hdr->type = VIOGPU_CMD_TRANSFER_FROM_HOST;
+        cmd_hdr->size = sizeof(VIOGPU_TRANSFER_CMD);
+        cmd_hdr->flags = 0;
+        cmd_hdr->ring_idx = 0;
+        dmaBuf += sizeof(VIOGPU_COMMAND_HDR);
+
+        VIOGPU_TRANSFER_CMD *cmdBody = (VIOGPU_TRANSFER_CMD *)dmaBuf;
+        dmaBuf += sizeof(VIOGPU_TRANSFER_CMD);
+
+        cmdBody->res_id = dst->GetId();
+
+        cmdBody->box.x = coverRect.left;
+        cmdBody->box.y = coverRect.top;
+        cmdBody->box.z = 0;
+        cmdBody->box.width = coverRect.right - coverRect.left;
+        cmdBody->box.height = coverRect.bottom - coverRect.top;
+        cmdBody->box.depth = 1;
+
+        cmdBody->layer_stride = 0;
+        cmdBody->stride = 0;
+        cmdBody->level = 0;
+        cmdBody->offset = 0;
+
+        pPresent->pDmaBuffer = dmaBuf;
+    }
+    else
+    {
+        VIOGPU_COMMAND_HDR *cmd_hdr = (VIOGPU_COMMAND_HDR *)pPresent->pDmaBuffer;
+        cmd_hdr->type = VIOGPU_CMD_NOP;
+        cmd_hdr->size = 0;
+        cmd_hdr->flags = 0;
+        cmd_hdr->ring_idx = 0;
+        pPresent->pDmaBuffer = (char *)pPresent->pDmaBuffer + sizeof(VIOGPU_COMMAND_HDR);
+    }
+
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
 {
     PAGED_CODE();
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s\n", __FUNCTION__));
 
     if (pPresent->Flags.Flip)
     {
@@ -158,7 +444,7 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
     }
 
     DbgPrint(TRACE_LEVEL_VERBOSE,
-             ("<---> %s Flags=%s %s %s %s %s %s %s %s)\n",
+             ("<---> %s Flags=(%s %s %s %s %s %s %s %s)\n",
               __FUNCTION__,
               pPresent->Flags.Blt ? "Blt" : "",
               pPresent->Flags.ColorFill ? "ColorFill" : "",
@@ -172,8 +458,8 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
     VioGpuCommand *cmd = new (NonPagedPoolNx) VioGpuCommand(m_pAdapter);
     if (pPresent->pDmaBuffer)
     {
-        VioGpuCommand **privateData = (VioGpuCommand **)pPresent->pDmaBufferPrivateData;
-        *privateData = cmd;
+        void **privateData = (void **)pPresent->pDmaBufferPrivateData;
+        *privateData = cmd->ToHandle();
     }
 
     cmd->SetDmaBuf((char *)pPresent->pDmaBuffer);
@@ -181,14 +467,13 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
     DXGK_ALLOCATIONLIST *dxgk_src = &pPresent->pAllocationList[DXGK_PRESENT_SOURCE_INDEX];
     DXGK_ALLOCATIONLIST *dxgk_dst = &pPresent->pAllocationList[DXGK_PRESENT_DESTINATION_INDEX];
 
-    VioGpuAllocation *src = NULL;
-    VioGpuAllocation *dst = NULL;
-    ;
+    VioGpuDeviceAllocation *src = NULL;
+    VioGpuDeviceAllocation *dst = NULL;
 
     if (dxgk_src->hDeviceSpecificAllocation != NULL)
     {
-        src = reinterpret_cast<VioGpuDeviceAllocation *>(dxgk_src->hDeviceSpecificAllocation)->GetAllocation();
-        if (pPresent->pDmaBuffer)
+        src = VioGpuDeviceAllocation::FromHandle(dxgk_src->hDeviceSpecificAllocation);
+        if (src && pPresent->pDmaBuffer)
         {
             pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
             pPresent->pPatchLocationListOut->AllocationOffset = 0;
@@ -203,8 +488,8 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
 
     if (dxgk_dst != NULL)
     {
-        dst = reinterpret_cast<VioGpuDeviceAllocation *>(dxgk_dst->hDeviceSpecificAllocation)->GetAllocation();
-        if (pPresent->pDmaBuffer)
+        dst = VioGpuDeviceAllocation::FromHandle(dxgk_dst->hDeviceSpecificAllocation);
+        if (dst && pPresent->pDmaBuffer)
         {
             pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
             pPresent->pPatchLocationListOut->AllocationOffset = 0;
@@ -221,7 +506,11 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
     {
         if (pPresent->pDmaBuffer && dst && src)
         {
-            GenerateBltPresent(pPresent, src, dst);
+            if (true /*m_Context.IsVirgl()*/) {
+                GenerateBltPresent(pPresent, src, dst);
+            } else {
+                GenerateBltPresentUM(pPresent, src->GetAllocation(), dst->GetAllocation());
+            }
         }
     }
     else
@@ -231,6 +520,8 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
             VIOGPU_COMMAND_HDR *cmd_hdr = (VIOGPU_COMMAND_HDR *)pPresent->pDmaBuffer;
             cmd_hdr->type = VIOGPU_CMD_NOP;
             cmd_hdr->size = 0;
+            cmd_hdr->flags = 0;
+            cmd_hdr->ring_idx = 0;
             pPresent->pDmaBuffer = (char *)pPresent->pDmaBuffer + sizeof(VIOGPU_COMMAND_HDR);
         }
 
@@ -243,7 +534,6 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
 NTSTATUS VioGpuDevice::Render(DXGKARG_RENDER *pRender)
 {
     PAGED_CODE();
-
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 
     char *pDmaBufStart = (char *)pRender->pDmaBuffer;
@@ -298,8 +588,8 @@ NTSTATUS VioGpuDevice::Render(DXGKARG_RENDER *pRender)
     VioGpuCommand *cmd = new (NonPagedPoolNx) VioGpuCommand(m_pAdapter);
     if (pRender->pDmaBuffer)
     {
-        VioGpuCommand **privateData = (VioGpuCommand **)pRender->pDmaBufferPrivateData;
-        *privateData = cmd;
+        void **privateData = (void **)pRender->pDmaBufferPrivateData;
+        *privateData = cmd->ToHandle();
     }
     cmd->SetDmaBuf(pDmaBufStart);
     cmd->AttachAllocations(pRender->pAllocationList, pRender->AllocationListSize);
@@ -318,7 +608,8 @@ NTSTATUS VioGpuDevice::OpenAllocation(_In_ CONST DXGKARG_OPENALLOCATION *pOpenAl
     {
         DXGK_OPENALLOCATIONINFO *openAllocationInfo = &pOpenAllocation->pOpenAllocation[i];
         VioGpuAllocation *allocation = m_pAdapter->AllocationFromHandle(openAllocationInfo->hAllocation);
-        openAllocationInfo->hDeviceSpecificAllocation = new (NonPagedPoolNx) VioGpuDeviceAllocation(this, allocation);
+        VioGpuDeviceAllocation *devAlloc = allocation->Open(this);
+        openAllocationInfo->hDeviceSpecificAllocation = devAlloc->ToHandle();
     }
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
@@ -336,22 +627,65 @@ VioGpuDeviceAllocation::VioGpuDeviceAllocation(VioGpuDevice *device, VioGpuAlloc
 {
     PAGED_CODE();
 
-    DbgPrint(TRACE_LEVEL_VERBOSE,
-             ("<---> %s res_id=%d ctx_id=%d\n", __FUNCTION__, allocation->GetId(), device->GetId()));
+    //auto lock_guard = allocation->LockGuard();
 
     m_pAllocation = allocation;
     m_pDevice = device;
+    m_RefCount = 1;
 
-    m_pDevice->GetCtrlQueue()->CtxResource(true, m_pDevice->GetId(), m_pAllocation->GetId());
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s res_id=%d ctx=%p\n",
+                                   __FUNCTION__,
+                                   allocation->GetId(),
+                                   device->m_Context.GetId()));
+
+    if (m_pAllocation->IsBlob() && !m_pAllocation->IsCreated())
+    {
+        DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s res_id=%d ctx_id=%d capset=%d blob_id=%llu creating blob resource\n",
+                                       __FUNCTION__,
+                                       allocation->GetId(),
+                                       device->m_Context.GetId(),
+                                       device->m_Context.GetCapset(),
+                                       allocation->m_Blob.Options.blob_id));
+        //m_pAllocation->CreateBlob(m_pDevice->m_Context.GetId());
+        bool ok = m_pDevice->GetCtrlQueue()->CreateResourceBlob(m_pAllocation->GetId(), m_pDevice->m_Context.GetId(), &m_pAllocation->m_Blob.Options, m_pAllocation->m_Size);
+        m_pAllocation->m_Blob.Created = ok;
+    }
+
+    m_pDevice->GetCtrlQueue()->CtxResource(true, m_pDevice->m_Context.GetId(), m_pAllocation->GetId());
+    m_AttachedToVirgl = false;
 }
 
 VioGpuDeviceAllocation::~VioGpuDeviceAllocation()
 {
     PAGED_CODE();
-    DbgPrint(TRACE_LEVEL_VERBOSE,
-             ("<---> %s res_id=%d ctx_id=%d\n", __FUNCTION__, m_pAllocation->GetId(), m_pDevice->GetId()));
 
-    m_pDevice->GetCtrlQueue()->CtxResource(false, m_pDevice->GetId(), m_pAllocation->GetId());
+    if (m_RefCount != 0 || m_pDevice == NULL || m_pAllocation == NULL)
+    {
+        DbgPrint(TRACE_LEVEL_ERROR, ("---> %s INVALID devalloc: ref=%lld devalloc=%p alloc=%p dev=%p\n", __FUNCTION__, m_RefCount, this, m_pAllocation, m_pDevice));
+        DbgBreakPoint();
+        return;
+    }
+
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s res_id=%d ctx_id=%d\n",
+                                   __FUNCTION__,
+                                   m_pAllocation->GetId(),
+                                   m_pDevice->m_Context.GetId()));
+
+
+    if (m_pAllocation->IsMapped())
+    {
+        // This is a driver bug
+        DbgPrint(TRACE_LEVEL_WARNING, ("---> %s res_id=%d UNREACHABLE blob is still mapped \n", __FUNCTION__, m_pAllocation->GetId()));
+        // FIXME: cannot do this here
+        //m_pAllocation->UnmapBlob(m_pDevice->m_Context.GetId(), NULL, NULL);
+    }
+
+    m_pDevice->GetCtrlQueue()->CtxResource(false, m_pDevice->m_Context.GetId(), m_pAllocation->GetId());
+
+    if (m_AttachedToVirgl)
+    {
+        m_pDevice->GetCtrlQueue()->CtxResource(false, m_pDevice->m_Virgl.GetId(), m_pAllocation->GetId());
+    }
 }
 
 VioGpuAllocation *VioGpuDeviceAllocation::GetAllocation()
@@ -359,6 +693,13 @@ VioGpuAllocation *VioGpuDeviceAllocation::GetAllocation()
     PAGED_CODE();
 
     return m_pAllocation;
+}
+
+VioGpuDevice *VioGpuDeviceAllocation::GetDevice()
+{
+    PAGED_CODE();
+
+    return m_pDevice;
 }
 
 PAGED_CODE_SEG_END

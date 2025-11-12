@@ -29,11 +29,11 @@
 
 #pragma once
 
-#include "helper.h"
+#include "handle.h"
 #include "viogpu_allocation.h"
 #include "viogpu_queue.h"
-#include <viogpu_command.h>
-#include <viogpu_vidpn.h>
+#include "viogpu_command.h"
+#include "viogpu_vidpn.h"
 
 #pragma pack(push)
 #pragma pack(1)
@@ -59,7 +59,7 @@ struct CAPSET_INFO
 
 virtio_gpu_formats ColorFormat(UINT format);
 
-class VioGpuAdapter : IVioGpuPCI
+class VioGpuAdapter final : public HandleBase<"VIOGADAP"_M, VioGpuAdapter>, IVioGpuPCI
 {
   public:
     VioGpuCommander commander;
@@ -76,6 +76,14 @@ class VioGpuAdapter : IVioGpuPCI
     UINT32 m_u32NumScanouts;
     UINT64 m_supportedCapsetIDs;
 
+    ULONGLONG GetShmemPA() {
+        if (!m_VioDev.shmem.available) {
+            return 0;
+        }
+        return m_PciResources.GetPciBar(m_VioDev.shmem.bar)->GetPA().QuadPart + m_VioDev.shmem.offset;
+    }
+
+    static const ULONGLONG SHMEM_GPU_BASE_VA = 0x700000000;
   private:
     DEVICE_OBJECT *m_pPhysicalDevice;
     DXGKRNL_INTERFACE m_DxgkInterface;
@@ -102,9 +110,14 @@ class VioGpuAdapter : IVioGpuPCI
     VioGpuObj *m_pCursorBuf;
     VioGpuMemSegment m_CursorSegment;
 
+    ULONG m_PciBus;
+    ULONG m_PciDev;
+    ULONG m_PciFunc;
+
     ULONG m_Id;
     CAPSET_INFO m_capsetInfos[VIRTIO_GPU_MAX_CAPSET_ID + 1];
 
+    LUID m_AdapterLuid;
   public:
     VioGpuAdapter(_In_ DEVICE_OBJECT *pPhysicalDeviceObject);
     ~VioGpuAdapter(void);
@@ -205,6 +218,7 @@ class VioGpuAdapter : IVioGpuPCI
         return m_PciResources.GetPciBar(0)->GetPA();
     }
 
+    volatile LONG m_LastCompletedFenceId;
   private:
     BOOLEAN CheckHardware();
     NTSTATUS WriteRegistryString(_In_ HANDLE DevInstRegKeyHandle, _In_ PCWSTR pszwValueName, _In_ PCSTR pszValue);
@@ -212,6 +226,7 @@ class VioGpuAdapter : IVioGpuPCI
     NTSTATUS ReadRegistryDWORD(_In_ HANDLE DevInstRegKeyHandle, _In_ PCWSTR pszwValueName, _Inout_ PDWORD pdwValue);
     NTSTATUS SetRegisterInfo(_In_ ULONG Id, _In_ DWORD MemSize);
     NTSTATUS GetRegisterInfo(void);
+    NTSTATUS GetPCIInfo(void);
 
     NTSTATUS HWInit(PCM_RESOURCE_LIST pResList);
     NTSTATUS HWClose(void);
