@@ -324,7 +324,7 @@ NTSTATUS VioGpuAllocation::GetStandardAllocationDriverData(DXGKARG_GETSTANDARDAL
     PAGED_CODE();
     DbgPrint(TRACE_LEVEL_ERROR, ("---> %s type=%d\n", __FUNCTION__, pStandardAllocation->StandardAllocationType));
 
-    if (!pStandardAllocation->pResourcePrivateDriverData && !pStandardAllocation->pResourcePrivateDriverData)
+    if (!pStandardAllocation->pResourcePrivateDriverData || !pStandardAllocation->pAllocationPrivateDriverData)
     {
         pStandardAllocation->ResourcePrivateDriverDataSize = sizeof(VIOGPU_CREATE_RESOURCE_EXCHANGE);
         pStandardAllocation->AllocationPrivateDriverDataSize = sizeof(VIOGPU_CREATE_ALLOCATION_EXCHANGE);
