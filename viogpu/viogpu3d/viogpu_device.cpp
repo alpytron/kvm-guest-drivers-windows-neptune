@@ -542,19 +542,22 @@ NTSTATUS VioGpuDevice::Render(DXGKARG_RENDER *pRender)
 
     __try
     {
-        pRender->PatchLocationListOutSize = pRender->PatchLocationListInSize;
-        for (UINT i = 0; i < pRender->PatchLocationListOutSize; i++)
+        // Bound on PatchLocationListOutSize (the OUT capacity) so a UMD
+        // supplying more IN entries than OUT slots cannot overrun the
+        // kernel buffer. The count of populated entries is signalled to
+        // DxgK by advancing pPatchLocationListOut, per the DDI.
+        UINT cPatch = min(pRender->PatchLocationListInSize, pRender->PatchLocationListOutSize);
+        for (UINT i = 0; i < cPatch; i++)
         {
-            pRender->pPatchLocationListOut->AllocationIndex = pRender->pPatchLocationListIn[i].AllocationIndex;
-            pRender->pPatchLocationListOut->AllocationOffset = 0;
-            pRender->pPatchLocationListOut->PatchOffset = 0;
-            pRender->pPatchLocationListOut->SplitOffset = 0;
-            pRender->pPatchLocationListOut->SlotId = i;
-
+            D3DDDI_PATCHLOCATIONLIST *out = &pRender->pPatchLocationListOut[0];
+            RtlZeroMemory(out, sizeof(*out));
+            out->AllocationIndex = pRender->pPatchLocationListIn[i].AllocationIndex;
+            out->SlotId = i;
             pRender->pPatchLocationListOut++;
         }
 
         unsigned char *dmaBuf = (unsigned char *)pRender->pDmaBuffer;
+        unsigned char *endDmaBuf = dmaBuf + pRender->DmaSize;
         unsigned char *cmdBuf = (unsigned char *)pRender->pCommand;
         unsigned char *endBuf = cmdBuf + pRender->CommandLength;
         while (cmdBuf < endBuf)
@@ -562,6 +565,11 @@ NTSTATUS VioGpuDevice::Render(DXGKARG_RENDER *pRender)
             if (cmdBuf + sizeof(VIOGPU_COMMAND_HDR) > endBuf)
             {
                 return STATUS_INVALID_USER_BUFFER;
+            }
+            if (dmaBuf + sizeof(VIOGPU_COMMAND_HDR) > endDmaBuf)
+            {
+                pRender->MultipassOffset = (UINT)(cmdBuf - (unsigned char *)pRender->pCommand);
+                return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
             }
 
             memcpy(dmaBuf, cmdBuf, sizeof(VIOGPU_COMMAND_HDR));
@@ -573,6 +581,12 @@ NTSTATUS VioGpuDevice::Render(DXGKARG_RENDER *pRender)
             {
                 return STATUS_INVALID_USER_BUFFER;
             }
+            if (dmaBuf + cmdHdr->size > endDmaBuf)
+            {
+                pRender->MultipassOffset =
+                    (UINT)(cmdBuf - sizeof(VIOGPU_COMMAND_HDR) - (unsigned char *)pRender->pCommand);
+                return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
+            }
 
             // Copy command body
             memcpy(dmaBuf, cmdBuf, cmdHdr->size);
@@ -583,7 +597,7 @@ NTSTATUS VioGpuDevice::Render(DXGKARG_RENDER *pRender)
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
-        DbgPrint(TRACE_LEVEL_FATAL, ("<---> %s Usermode copy exception", __FUNCTION__));
+        DbgPrint(TRACE_LEVEL_WARNING, ("<---> %s Usermode copy exception", __FUNCTION__));
         return STATUS_INVALID_PARAMETER;
     }
 
