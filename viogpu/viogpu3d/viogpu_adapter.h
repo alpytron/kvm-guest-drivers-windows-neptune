@@ -199,6 +199,10 @@ class VioGpuAdapter final : public HandleBase<"VIOGADAP"_M, VioGpuAdapter>, IVio
     {
         return &m_DxgkInterface;
     }
+    DEVICE_OBJECT *GetPhysicalDevice(void)
+    {
+        return m_pPhysicalDevice;
+    }
     NTSTATUS NotifyInterrupt(DXGKARGCB_NOTIFY_INTERRUPT_DATA *interruptData, BOOL triggerDpc);
 
     CPciResources *GetPciResources(void)

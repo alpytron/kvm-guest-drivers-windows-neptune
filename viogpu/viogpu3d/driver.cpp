@@ -509,7 +509,9 @@ VioGpu3DDestroyAllocation(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_DESTROY
         VioGpuAllocation *allocation = VioGpuAllocation::FromHandle(pDestroyAllocation->pAllocationList[i]);
         if (allocation != NULL)
         {
-            delete allocation;
+            // Release the DXGK reference. Async paths that took an extra
+            // ref (e.g. the vsync DPC) complete the deletion.
+            allocation->Release();
         }
     }
 

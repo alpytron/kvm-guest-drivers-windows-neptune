@@ -43,6 +43,21 @@ class VioGpuAllocation final : public HandleBase<"VIOGALLO"_M, VioGpuAllocation>
 
     ~VioGpuAllocation(void);
 
+    // Refcounting. Constructor starts at 1 (the DXGK reference). AddRef
+    // before publishing this pointer to a path that may outlive
+    // DxgkDestroyAllocation; the matching Release runs after the pointer
+    // is dropped. Object is deleted when the count reaches zero.
+    void AddRef();
+    void Release();
+
+    // Variant of Release safe at IRQL >= DISPATCH_LEVEL. ~VioGpuAllocation
+    // tears down LinkedList<VioGpuDeviceAllocation>, whose entries' dtor
+    // is PAGED_CODE(); a Release that drops the last ref from a DPC or
+    // higher would trip that contract. At raised IRQL the Release runs
+    // through a pre-allocated work item so the destructor lands at
+    // PASSIVE_LEVEL.
+    void ReleaseDeferred();
+
     inline UINT GetId(void) const
     {
         return m_Id;
@@ -155,6 +170,8 @@ class VioGpuAllocation final : public HandleBase<"VIOGALLO"_M, VioGpuAllocation>
     inline VOID MapBlobLocked(UINT ctx_id, void (*complete_cb)(void *, void *, void *), void *complete_ctx);
     inline VOID UnmapBlobLocked(UINT ctx_id, void (*complete_cb)(void *, void *, void *), void *complete_ctx);
 
+    static VOID NTAPI DeferredReleaseWorker(PDEVICE_OBJECT DeviceObject, PVOID Context);
+
     VioGpuAdapter *m_adapter;
     UINT m_Id;
 
@@ -170,6 +187,14 @@ class VioGpuAllocation final : public HandleBase<"VIOGALLO"_M, VioGpuAllocation>
 
     KEVENT m_busyNotification;
     volatile LONG m_busy;
+
+    volatile LONG m_refCount;
+
+    // Pre-allocated at construction time so ReleaseDeferred can punt
+    // the trailing Release out of a raised-IRQL caller (e.g. the DIRQL
+    // arm of DxgkDdiSetVidPnSourceAddress) without risking
+    // IoAllocateWorkItem failure on the hot path.
+    PIO_WORKITEM m_deferReleaseItem;
 };
 
 extern void NotifyResourceDestroyed(void *ctx, void *cmd, void *resp);

@@ -31,6 +31,9 @@ VioGpuAllocation::VioGpuAllocation(VioGpuAdapter *adapter, VIOGPU_RESOURCE_BLOB_
 
     ExInitializeFastMutex(&m_Lock);
 
+    m_refCount = 1;
+    m_deferReleaseItem = IoAllocateWorkItem(m_adapter->GetPhysicalDevice());
+
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s res_id=%d blob_id=%lld\n", __FUNCTION__, m_Id, m_Blob.Options.blob_id));
 }
 
@@ -57,7 +60,52 @@ VioGpuAllocation::VioGpuAllocation(VioGpuAdapter *adapter, VIOGPU_RESOURCE_3D_OP
 
     ExInitializeFastMutex(&m_Lock);
 
+    m_refCount = 1;
+    m_deferReleaseItem = IoAllocateWorkItem(m_adapter->GetPhysicalDevice());
+
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s res_id=%d 3D\n", __FUNCTION__, m_Id));
+}
+
+void VioGpuAllocation::AddRef()
+{
+    InterlockedIncrement(&m_refCount);
+}
+
+void VioGpuAllocation::Release()
+{
+    LONG newCount = InterlockedDecrement(&m_refCount);
+    ASSERT(newCount >= 0);
+    if (newCount == 0)
+    {
+        delete this;
+    }
+}
+
+void VioGpuAllocation::ReleaseDeferred()
+{
+    // The destructor tears down LinkedList<VioGpuDeviceAllocation>, whose
+    // entries' dtor is PAGED_CODE(). A Release that drops the last ref
+    // from a DPC (or higher) would trip that contract. At raised IRQL,
+    // hand the Release to the pre-allocated work item so the destructor
+    // lands at PASSIVE_LEVEL.
+    if (m_deferReleaseItem && KeGetCurrentIrql() >= DISPATCH_LEVEL)
+    {
+        IoQueueWorkItem(m_deferReleaseItem,
+                        VioGpuAllocation::DeferredReleaseWorker,
+                        DelayedWorkQueue,
+                        this);
+    }
+    else
+    {
+        Release();
+    }
+}
+
+VOID NTAPI VioGpuAllocation::DeferredReleaseWorker(PDEVICE_OBJECT DeviceObject, PVOID Context)
+{
+    UNREFERENCED_PARAMETER(DeviceObject);
+    VioGpuAllocation *alloc = reinterpret_cast<VioGpuAllocation *>(Context);
+    alloc->Release();
 }
 
 void NotifyResourceDestroyed(void *ctx, void *cmd, void *)
@@ -71,6 +119,12 @@ void NotifyResourceDestroyed(void *ctx, void *cmd, void *)
 VioGpuAllocation::~VioGpuAllocation(void)
 {
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s res_id=%d IsBlob=%d alloc=%p size=%zu\n", __FUNCTION__, m_Id, m_IsBlob, this, m_DeviceAllocations.size()));
+
+    if (m_deferReleaseItem)
+    {
+        IoFreeWorkItem(m_deferReleaseItem);
+        m_deferReleaseItem = NULL;
+    }
 
     m_DeviceAllocations.clear();
 
