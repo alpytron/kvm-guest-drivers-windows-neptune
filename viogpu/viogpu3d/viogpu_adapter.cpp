@@ -410,8 +410,12 @@ VioGpuAdapter::QueryChildRelations(_Out_writes_bytes_(ChildRelationsSize) DXGK_C
         pChildRelations[ChildIndex].ChildDeviceType = TypeVideoOutput;
         pChildRelations[ChildIndex].ChildCapabilities.HpdAwareness = IsVgaDevice() ? HpdAwarenessAlwaysConnected
                                                                                    : HpdAwarenessInterruptible;
+        // Virtual virtio-gpu scanouts have no physical connector.
+        // VOT_OTHER is the documented catch-all; HD15 would identify
+        // the output as analog VGA D-Sub and gate off HDR/VRR via
+        // connector-type heuristics in the shell.
         pChildRelations[ChildIndex].ChildCapabilities.Type.VideoOutput.InterfaceTechnology = IsVgaDevice() ? D3DKMDT_VOT_INTERNAL
-                                                                                                           : D3DKMDT_VOT_HD15;
+                                                                                                           : D3DKMDT_VOT_OTHER;
         pChildRelations[ChildIndex].ChildCapabilities.Type.VideoOutput.MonitorOrientationAwareness = D3DKMDT_MOA_NONE;
         pChildRelations[ChildIndex].ChildCapabilities.Type.VideoOutput.SupportsSdtvModes = FALSE;
         pChildRelations[ChildIndex].AcpiUid = 0;
