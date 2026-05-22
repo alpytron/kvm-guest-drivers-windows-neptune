@@ -440,13 +440,6 @@ NTSTATUS VioGpuAdapter::QueryChildStatus(_Inout_ DXGK_CHILD_STATUS *pChildStatus
                 return STATUS_SUCCESS;
             }
 
-        case StatusRotation:
-            {
-                DbgPrint(TRACE_LEVEL_ERROR,
-                         ("Child status being queried for StatusRotation even though D3DKMDT_MOA_NONE was reported"));
-                return STATUS_INVALID_PARAMETER;
-            }
-
         default:
             {
                 DbgPrint(TRACE_LEVEL_WARNING, ("Unknown pChildStatus->Type (0x%I64x) requested.", pChildStatus->Type));
