@@ -390,7 +390,6 @@ BOOLEAN CtrlQueue::GetEdidInfo(PGPU_VBUFFER buf, UINT id, PBYTE edid)
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
     PGPU_CMD_GET_EDID cmd = (PGPU_CMD_GET_EDID)buf->buf;
     PGPU_RESP_EDID resp = (PGPU_RESP_EDID)buf->resp_buf;
-    PUCHAR resp_edit = (PUCHAR)(resp->edid + (ULONGLONG)id * EDID_V1_BLOCK_SIZE);
     if (resp->hdr.type != VIRTIO_GPU_RESP_OK_EDID)
     {
         DbgPrint(TRACE_LEVEL_VERBOSE, (" %s type = %x: disabled\n", __FUNCTION__, resp->hdr.type));
@@ -402,7 +401,26 @@ BOOLEAN CtrlQueue::GetEdidInfo(PGPU_VBUFFER buf, UINT id, PBYTE edid)
         return FALSE;
     }
 
-    RtlCopyMemory(edid, resp_edit, EDID_RAW_BLOCK_SIZE);
+    // Trust resp->size as the bound: the host advertised how many bytes
+    // of resp->edid it actually filled. Clamp to the response buffer
+    // size and to EDID_RAW_BLOCK_SIZE; zero-fill the rest so callers
+    // never parse uninitialized tail bytes shaped by a malicious host.
+    ULONG host_size = resp->size;
+    if (host_size > sizeof(resp->edid))
+    {
+        host_size = sizeof(resp->edid);
+    }
+    ULONG offset = (ULONG)id * EDID_V1_BLOCK_SIZE;
+    ULONG available = (host_size > offset) ? (host_size - offset) : 0;
+    ULONG to_copy = min(available, (ULONG)EDID_RAW_BLOCK_SIZE);
+    if (to_copy)
+    {
+        RtlCopyMemory(edid, resp->edid + offset, to_copy);
+    }
+    if (to_copy < EDID_RAW_BLOCK_SIZE)
+    {
+        RtlZeroMemory(edid + to_copy, EDID_RAW_BLOCK_SIZE - to_copy);
+    }
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
 
     return TRUE;
