@@ -283,6 +283,11 @@ BOOLEAN CtrlQueue::AskDisplayInfo(PGPU_VBUFFER *buf)
     }
 
     cmd = (PGPU_CTRL_HDR)AllocCmdResp(&vbuf, sizeof(GPU_CTRL_HDR), resp_buf, sizeof(GPU_RESP_DISP_INFO));
+    if (!cmd)
+    {
+        delete[] reinterpret_cast<PBYTE>(resp_buf);
+        return FALSE;
+    }
     RtlZeroMemory(cmd, sizeof(GPU_CTRL_HDR));
 
     cmd->type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
@@ -344,6 +349,11 @@ BOOLEAN CtrlQueue::AskEdidInfo(PGPU_VBUFFER *buf, UINT id)
         return FALSE;
     }
     cmd = (PGPU_CMD_GET_EDID)AllocCmdResp(&vbuf, sizeof(GPU_CMD_GET_EDID), resp_buf, sizeof(GPU_RESP_EDID));
+    if (!cmd)
+    {
+        delete[] reinterpret_cast<PBYTE>(resp_buf);
+        return FALSE;
+    }
     RtlZeroMemory(cmd, sizeof(GPU_CMD_GET_EDID));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_GET_EDID;
@@ -453,6 +463,11 @@ BOOLEAN CtrlQueue::AskCapsetInfo(PGPU_VBUFFER *buf, ULONG idx)
                                                   sizeof(GPU_CMD_GET_CAPSET_INFO),
                                                   resp_buf,
                                                   sizeof(GPU_RESP_CAPSET_INFO));
+    if (!cmd)
+    {
+        delete[] reinterpret_cast<PBYTE>(resp_buf);
+        return FALSE;
+    }
     RtlZeroMemory(cmd, sizeof(GPU_CMD_GET_CAPSET_INFO));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_GET_CAPSET_INFO;
@@ -522,6 +537,11 @@ BOOLEAN CtrlQueue::AskCapset(PGPU_VBUFFER *buf, ULONG capset_id, ULONG capset_si
         return FALSE;
     }
     cmd = (PGPU_CMD_GET_CASPSET)AllocCmdResp(&vbuf, sizeof(GPU_CMD_GET_CAPSET), resp_buf, (int)resp_size);
+    if (!cmd)
+    {
+        delete[] reinterpret_cast<PBYTE>(resp_buf);
+        return FALSE;
+    }
     RtlZeroMemory(cmd, sizeof(GPU_CMD_GET_CAPSET));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_GET_CAPSET;
@@ -571,6 +591,10 @@ void CtrlQueue::CreateResource(UINT res_id, UINT format, UINT width, UINT height
     PGPU_RES_CREATE_2D cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_RES_CREATE_2D)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
@@ -593,6 +617,10 @@ void CtrlQueue::CreateResource3D(UINT res_id, VIOGPU_RESOURCE_3D_OPTIONS *option
     PGPU_CMD_RES_CREATE_3D cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_CMD_RES_CREATE_3D)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
@@ -623,6 +651,10 @@ bool CtrlQueue::CreateResourceBlob(UINT res_id, UINT ctx_id, VIOGPU_RESOURCE_BLO
     PGPU_RES_CREATE_BLOB cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_RES_CREATE_BLOB)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return FALSE;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB;
@@ -679,6 +711,10 @@ void CtrlQueue::CreateCtx(UINT ctx_id, UINT context_init, UCHAR device_name[64])
     PGPU_CMD_CTX_CREATE cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_CMD_CTX_CREATE)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_CTX_CREATE;
@@ -702,6 +738,10 @@ void CtrlQueue::DestroyCtx(UINT ctx_id, void (*complete_cb)(void *, void *, void
     PGPU_CMD_CTX_DESTROY cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_CMD_CTX_DESTROY)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_CTX_DESTROY;
@@ -726,6 +766,10 @@ void CtrlQueue::ResFlush(UINT res_id, UINT width, UINT height, UINT x, UINT y)
     PGPU_RES_FLUSH cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_RES_FLUSH)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
@@ -748,6 +792,10 @@ void CtrlQueue::TransferToHost2D(UINT res_id, ULONG offset, UINT width, UINT hei
     PGPU_RES_TRANSF_TO_HOST_2D cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_RES_TRANSF_TO_HOST_2D)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
@@ -771,6 +819,10 @@ void CtrlQueue::TransferToHost3D(UINT res_id, GPU_BOX *box)
     PGPU_CMD_TRANSFER_HOST_3D cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_CMD_TRANSFER_HOST_3D)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D;
@@ -795,6 +847,10 @@ void CtrlQueue::AttachBacking(UINT res_id, PGPU_MEM_ENTRY ents, UINT nents)
     PGPU_RES_ATTACH_BACKING cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_RES_ATTACH_BACKING)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
@@ -818,6 +874,10 @@ void CtrlQueue::CtxResource(bool attach, UINT ctx_id, UINT res_id)
     PGPU_CMD_CTX_RESOURCE cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_CMD_CTX_RESOURCE)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = attach ? VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE : VIRTIO_GPU_CMD_CTX_DETACH_RESOURCE;
@@ -840,6 +900,10 @@ void CtrlQueue::SubmitCommand(void *cmdbuf, ULONG size, ULONG ctx_id, BOOL has_r
     PGPU_CMD_SUBMIT cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_CMD_SUBMIT)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
@@ -883,6 +947,10 @@ void CtrlQueue::TransferHostCmd(bool to_host,
     PGPU_CMD_TRANSFER_HOST_3D cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_CMD_TRANSFER_HOST_3D)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = to_host ? VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D : VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D;
@@ -930,6 +998,10 @@ void CtrlQueue::ResourceMapBlob(UINT res_id, UINT ctx_id, ULONGLONG offset, void
     PGPU_RES_MAP_BLOB cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_RES_MAP_BLOB)AllocCmdResp(&vbuf, sizeof(*cmd), NULL, sizeof(GPU_RESP_MAP_INFO));
+    if (!cmd)
+    {
+        return;
+    }
 
     RtlZeroMemory(cmd, sizeof(*cmd));
 
@@ -957,6 +1029,10 @@ void CtrlQueue::ResourceUnmapBlob(UINT res_id, UINT ctx_id, void (*complete_cb)(
     PGPU_RES_UNMAP_BLOB cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_RES_UNMAP_BLOB)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNMAP_BLOB;
@@ -982,6 +1058,10 @@ void CtrlQueue::DestroyResource(UINT res_id, void (*complete_cb)(void *, void *,
     PGPU_RES_UNREF cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_RES_UNREF)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
@@ -1004,6 +1084,10 @@ void CtrlQueue::DetachBacking(UINT res_id)
     PGPU_RES_DETACH_BACKING cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_RES_DETACH_BACKING)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING;
@@ -1020,7 +1104,6 @@ PVOID CtrlQueue::AllocCmdResp(PGPU_VBUFFER *buf, int cmd_sz, PVOID resp_buf, int
 
     PGPU_VBUFFER vbuf;
     vbuf = m_pBuf->GetBuf(cmd_sz, resp_sz, resp_buf);
-    ASSERT(vbuf);
     *buf = vbuf;
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
@@ -1038,7 +1121,6 @@ PVOID CtrlQueue::AllocCmd(PGPU_VBUFFER *buf, int sz)
     }
 
     PGPU_VBUFFER vbuf = m_pBuf->GetBuf(sz, sizeof(GPU_CTRL_HDR), NULL);
-    ASSERT(vbuf);
     *buf = vbuf;
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s  vbuf = %p\n", __FUNCTION__, vbuf));
@@ -1053,6 +1135,10 @@ void CtrlQueue::SetScanout(UINT scan_id, UINT res_id, UINT width, UINT height, U
     PGPU_SET_SCANOUT cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_SET_SCANOUT)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT;
@@ -1076,6 +1162,10 @@ void CtrlQueue::SetScanoutBlob(UINT scan_id, UINT res_id, GPU_RECT rect, VIOGPU_
     PGPU_SET_SCANOUT_BLOB cmd;
     PGPU_VBUFFER vbuf;
     cmd = (PGPU_SET_SCANOUT_BLOB)AllocCmd(&vbuf, sizeof(*cmd));
+    if (!cmd)
+    {
+        return;
+    }
     RtlZeroMemory(cmd, sizeof(*cmd));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT_BLOB;
@@ -1301,7 +1391,10 @@ PGPU_VBUFFER VioGpuBuf::GetBuf(_In_ int size, _In_ int resp_size, _In_opt_ void 
     if (IsListEmpty(&m_FreeBufs))
     {
         pbuf = reinterpret_cast<PGPU_VBUFFER>(new (NonPagedPoolNx) BYTE[VBUFFER_SIZE]);
-        ++m_uCount;
+        if (pbuf)
+        {
+            ++m_uCount;
+        }
     }
     else
     {
@@ -1309,9 +1402,49 @@ PGPU_VBUFFER VioGpuBuf::GetBuf(_In_ int size, _In_ int resp_size, _In_opt_ void 
         pbuf = CONTAINING_RECORD(pListItem, GPU_VBUFFER, list_entry);
     }
 
-    ASSERT(pbuf);
+    if (!pbuf)
+    {
+        if (SavedIrql < DISPATCH_LEVEL)
+        {
+            KeReleaseSpinLock(&m_SpinLock, SavedIrql);
+        }
+        else
+        {
+            KeReleaseSpinLockFromDpcLevel(&m_SpinLock);
+        }
+        DbgPrint(TRACE_LEVEL_ERROR, ("<--- %s allocation failed\n", __FUNCTION__));
+        return NULL;
+    }
+
+    if (size > MAX_INLINE_CMD_SIZE)
+    {
+        // Runtime guard for callers that grow the command size; the
+        // inline cmd buffer cannot hold it. Return the vbuf to the
+        // free list and fail cleanly instead of corrupting the next
+        // buffer.
+        DbgPrint(TRACE_LEVEL_ERROR,
+                 ("<--- %s command size %d exceeds inline max %d\n",
+                  __FUNCTION__, size, MAX_INLINE_CMD_SIZE));
+        if (pListItem)
+        {
+            InsertHeadList(&m_FreeBufs, &pbuf->list_entry);
+        }
+        else
+        {
+            delete[] reinterpret_cast<PBYTE>(pbuf);
+            --m_uCount;
+        }
+        if (SavedIrql < DISPATCH_LEVEL)
+        {
+            KeReleaseSpinLock(&m_SpinLock, SavedIrql);
+        }
+        else
+        {
+            KeReleaseSpinLockFromDpcLevel(&m_SpinLock);
+        }
+        return NULL;
+    }
     memset(pbuf, 0, VBUFFER_SIZE);
-    ASSERT(size <= MAX_INLINE_CMD_SIZE);
 
     pbuf->buf = (char *)((ULONG_PTR)pbuf + sizeof(*pbuf));
     pbuf->size = size;
