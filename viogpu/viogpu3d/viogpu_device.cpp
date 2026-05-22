@@ -471,36 +471,36 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
 
     VioGpuDeviceAllocation *src = NULL;
     VioGpuDeviceAllocation *dst = NULL;
+    UINT cPatchOut = 0;
+    const UINT cPatchOutMax = pPresent->PatchLocationListOutSize;
 
     if (dxgk_src->hDeviceSpecificAllocation != NULL)
     {
         src = VioGpuDeviceAllocation::FromHandle(dxgk_src->hDeviceSpecificAllocation);
-        if (src && pPresent->pDmaBuffer)
+        if (src && pPresent->pDmaBuffer && cPatchOut < cPatchOutMax)
         {
-            pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
-            pPresent->pPatchLocationListOut->AllocationOffset = 0;
-            pPresent->pPatchLocationListOut->DriverId = 1;
-            pPresent->pPatchLocationListOut->SlotId = 1;
-            pPresent->pPatchLocationListOut->PatchOffset = 0;
-            pPresent->pPatchLocationListOut->SplitOffset = 0;
-
+            D3DDDI_PATCHLOCATIONLIST *out = pPresent->pPatchLocationListOut;
+            RtlZeroMemory(out, sizeof(*out));
+            out->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
+            out->DriverId = 1;
+            out->SlotId = 1;
             pPresent->pPatchLocationListOut += 1;
+            cPatchOut++;
         }
     }
 
     if (dxgk_dst != NULL)
     {
         dst = VioGpuDeviceAllocation::FromHandle(dxgk_dst->hDeviceSpecificAllocation);
-        if (dst && pPresent->pDmaBuffer)
+        if (dst && pPresent->pDmaBuffer && cPatchOut < cPatchOutMax)
         {
-            pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
-            pPresent->pPatchLocationListOut->AllocationOffset = 0;
-            pPresent->pPatchLocationListOut->DriverId = 2;
-            pPresent->pPatchLocationListOut->SlotId = 2;
-            pPresent->pPatchLocationListOut->PatchOffset = 0;
-            pPresent->pPatchLocationListOut->SplitOffset = 0;
-
+            D3DDDI_PATCHLOCATIONLIST *out = pPresent->pPatchLocationListOut;
+            RtlZeroMemory(out, sizeof(*out));
+            out->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
+            out->DriverId = 2;
+            out->SlotId = 2;
             pPresent->pPatchLocationListOut += 1;
+            cPatchOut++;
         }
     }
 
