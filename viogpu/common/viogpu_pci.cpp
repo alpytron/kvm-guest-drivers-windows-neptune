@@ -363,6 +363,7 @@ bool CPciResources::Init(PDXGKRNL_INTERFACE pDxgkInterface, PCM_RESOURCE_LIST pR
     ULONG BytesRead = 0;
     NTSTATUS Status = STATUS_SUCCESS;
     bool interrupt_found = false;
+    bool memory_found = false;
     int bar = -1;
 
     m_pDxgkInterface = pDxgkInterface;
@@ -440,6 +441,7 @@ bool CPciResources::Init(PDXGKRNL_INTERFACE pDxgkInterface, PCM_RESOURCE_LIST pR
                             break;
                         }
                         m_Bars[bar] = CPciBar(Start, len, false, true);
+                        memory_found = true;
                     }
                     break;
                 case CmResourceTypeDma:
@@ -482,6 +484,7 @@ bool CPciResources::Init(PDXGKRNL_INTERFACE pDxgkInterface, PCM_RESOURCE_LIST pR
                         }
                         // This is most likely the "virtio modern memory (64bit)" bar, QEMU hardcodes it to have index 4
                         m_Bars[bar] = CPciBar(Start, len, false, true);
+                        memory_found = true;
                     }
                     break;
                 case CmResourceTypeDevicePrivate:
@@ -493,9 +496,11 @@ bool CPciResources::Init(PDXGKRNL_INTERFACE pDxgkInterface, PCM_RESOURCE_LIST pR
             }
         }
     }
-    if (bar < 0 || !interrupt_found)
+    if (!memory_found || !interrupt_found)
     {
-        DbgPrint(TRACE_LEVEL_FATAL, ("[%s] resource enumeration failed\n", __FUNCTION__));
+        DbgPrint(TRACE_LEVEL_FATAL,
+                 ("[%s] resource enumeration failed memory=%d interrupt=%d\n",
+                  __FUNCTION__, memory_found, interrupt_found));
         return false;
     }
     return true;
