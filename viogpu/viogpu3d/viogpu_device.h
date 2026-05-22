@@ -117,4 +117,9 @@ class VioGpuDeviceAllocation final : public HandleBase<"VIOGDEAL"_M, VioGpuDevic
     VioGpuAllocation *m_pAllocation;
     VioGpuDevice *m_pDevice;
     volatile LONGLONG m_RefCount;
+    // Whether CTX_ATTACH_RESOURCE actually issued. The destructor
+    // skips DETACH if FALSE so we never send a stray DETACH for a
+    // pair that never attached (e.g., when OpenAllocation's blob
+    // create fails after the device-allocation is constructed).
+    bool m_attached;
 };
