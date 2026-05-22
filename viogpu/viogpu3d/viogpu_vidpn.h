@@ -103,6 +103,10 @@ class VioGpuVidPN
 
     NTSTATUS SetVidPnSourceAddress(const DXGKARG_SETVIDPNSOURCEADDRESS *pSetVidPnSourceAddress);
 
+    // Currently-committed refresh rate, or {0,0} if no source mode is
+    // pinned. Caller is responsible for choosing a default.
+    D3DDDI_RATIONAL GetActiveRefreshRate() const;
+
   private:
     NTSTATUS SetSourceModeAndPath(CONST D3DKMDT_VIDPN_SOURCE_MODE *pSourceMode,
                                   CONST D3DKMDT_VIDPN_PRESENT_PATH *pPath);

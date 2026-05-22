@@ -2025,6 +2025,23 @@ void VioGpuVidPN::Flip()
     m_pAdapter->NotifyInterrupt(&interrupt, true);
 }
 
+D3DDDI_RATIONAL VioGpuVidPN::GetActiveRefreshRate() const
+{
+    PAGED_CODE();
+
+    D3DDDI_RATIONAL rate = {0, 0};
+    // m_ModeInfo/m_CurrentModeIndex point at the active mode. Our
+    // builds emit a fixed 60 Hz signal (see BuildVideoSignalInfo);
+    // surface that to UMD when a source is pinned, otherwise leave
+    // the rate unset so the caller picks a default.
+    if (m_ModeInfo && m_CurrentModeIndex < m_ModeCount)
+    {
+        rate.Numerator = 60;
+        rate.Denominator = 1;
+    }
+    return rate;
+}
+
 void VioGpuVidPN::FlipThread(void *ctx)
 {
     PAGED_CODE();
