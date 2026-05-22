@@ -1058,11 +1058,13 @@ VioGpu3DDdiGetScanLine(_In_ CONST HANDLE hAdapter, _Inout_ DXGKARG_GETSCANLINE *
 {
     PAGED_CODE();
     UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pGetScanLine);
 
-    DbgBreakPoint();
-    DbgPrint(TRACE_LEVEL_ERROR, ("Not imp %s\n", __FUNCTION__));
-    return STATUS_NO_MEMORY;
+    // virtio-gpu has no per-line scanout model. Report always-in-vblank
+    // with ScanLine 0; DWM and present-statistics callers treat that as
+    // "vblank just occurred, proceed."
+    pGetScanLine->InVerticalBlank = TRUE;
+    pGetScanLine->ScanLine = 0;
+    return STATUS_SUCCESS;
 }
 
 // END: Paged Code
