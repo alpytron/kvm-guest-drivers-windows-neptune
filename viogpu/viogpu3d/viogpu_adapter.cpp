@@ -685,6 +685,15 @@ NTSTATUS VioGpuAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
                     return STATUS_INVALID_BUFFER_SIZE;
                 }
 
+                if (pVioGpuEscape->Capset.CapsetId == 0 ||
+                    pVioGpuEscape->Capset.CapsetId > VIRTIO_GPU_MAX_CAPSET_ID)
+                {
+                    DbgPrint(TRACE_LEVEL_ERROR,
+                             ("%s capset id %llu out of range\n",
+                              __FUNCTION__,
+                              (ULONGLONG)pVioGpuEscape->Capset.CapsetId));
+                    return STATUS_INVALID_PARAMETER_1;
+                }
                 if (!(m_supportedCapsetIDs & (1ull << pVioGpuEscape->Capset.CapsetId)))
                 {
                     DbgPrint(TRACE_LEVEL_ERROR, ("%s capset id is not supported\n", __FUNCTION__));
@@ -706,11 +715,13 @@ NTSTATUS VioGpuAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
                 {
                     UCHAR *buf = ((PGPU_RESP_CAPSET)vbuf->resp_buf)->capset_data;
                     ULONG to_copy = min(pVioGpuEscape->Capset.Size, pCapsetInfo->max_size);
-                    memcpy(pVioGpuEscape->Capset.Capset, buf, to_copy);
+                    UCHAR *userCapset = pVioGpuEscape->Capset.Capset;
+                    ProbeForWrite(userCapset, to_copy, sizeof(UCHAR));
+                    memcpy(userCapset, buf, to_copy);
                 }
                 __except (EXCEPTION_EXECUTE_HANDLER)
                 {
-                    DbgPrint(TRACE_LEVEL_FATAL, ("Failed to copy"));
+                    DbgPrint(TRACE_LEVEL_WARNING, ("Failed to copy capset to user buffer"));
                     status = STATUS_INVALID_PARAMETER;
                 }
                 ctrlQueue.ReleaseBuffer(vbuf);
