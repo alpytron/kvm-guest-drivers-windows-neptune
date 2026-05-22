@@ -1295,19 +1295,20 @@ BOOLEAN VioGpuBuf::Init(_In_ UINT cnt)
     for (UINT i = 0; i < cnt; ++i)
     {
         PGPU_VBUFFER pvbuf = reinterpret_cast<PGPU_VBUFFER>(new (NonPagedPoolNx) BYTE[VBUFFER_SIZE]);
-        // FIXME
-        RtlZeroMemory(pvbuf, VBUFFER_SIZE);
-        if (pvbuf)
+        if (!pvbuf)
         {
-            KeAcquireSpinLock(&m_SpinLock, &OldIrql);
-            InsertTailList(&m_FreeBufs, &pvbuf->list_entry);
-            ++m_uCount;
-            KeReleaseSpinLock(&m_SpinLock, OldIrql);
+            DbgPrint(TRACE_LEVEL_ERROR,
+                     ("%s failed to allocate vbuf %u of %u\n", __FUNCTION__, i, cnt));
+            continue;
         }
+        RtlZeroMemory(pvbuf, VBUFFER_SIZE);
+        KeAcquireSpinLock(&m_SpinLock, &OldIrql);
+        InsertTailList(&m_FreeBufs, &pvbuf->list_entry);
+        ++m_uCount;
+        KeReleaseSpinLock(&m_SpinLock, OldIrql);
     }
-    ASSERT(m_uCount == cnt);
 
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
+    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s count=%u/%u\n", __FUNCTION__, m_uCount, cnt));
 
     return (m_uCount > 0);
 }

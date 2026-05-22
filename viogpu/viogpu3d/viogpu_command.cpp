@@ -64,9 +64,16 @@ void VioGpuCommand::Run()
             case VIOGPU_CMD_SUBMIT:
                 {
                     PBYTE submitCmd = new (NonPagedPoolNx) BYTE[cmdHdr->size];
+                    if (!submitCmd)
+                    {
+                        DbgPrint(TRACE_LEVEL_ERROR,
+                                 ("%s fence_id=%d OOM allocating submit buffer (size=%u); skipping command\n",
+                                  __FUNCTION__,
+                                  m_FenceId,
+                                  cmdHdr->size));
+                        goto end;
+                    }
                     RtlCopyMemory(submitCmd, cmdBody, cmdHdr->size);
-
-
 
                     m_pAdapter->ctrlQueue.SubmitCommand(submitCmd,
                                                         cmdHdr->size,
