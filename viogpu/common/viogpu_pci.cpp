@@ -520,7 +520,7 @@ PVOID CPciResources::GetMappedAddress(UINT bar, ULONG uOffset)
         if (m_Bars[bar].IsPortSpace())
         {
             // use physical address for port I/O
-            return (PUCHAR)(ULONG_PTR)m_Bars[bar].GetPA().LowPart + uOffset;
+            return (PUCHAR)(ULONG_PTR)m_Bars[bar].GetPA().QuadPart + uOffset;
         }
         else
         {
