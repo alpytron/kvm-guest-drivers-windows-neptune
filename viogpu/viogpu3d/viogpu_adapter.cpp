@@ -1865,12 +1865,12 @@ void VioGpuAdapter::ConfigChanged(void)
 {
     DbgPrint(TRACE_LEVEL_FATAL, ("<--> %s\n", __FUNCTION__));
     UINT32 events_read, events_clear = 0;
-    virtio_get_config(&m_VioDev, FIELD_OFFSET(GPU_CONFIG, events_read), &events_read, sizeof(m_u32NumScanouts));
+    virtio_get_config(&m_VioDev, FIELD_OFFSET(GPU_CONFIG, events_read), &events_read, sizeof(events_read));
     if (events_read & VIRTIO_GPU_EVENT_DISPLAY)
     {
         vidpn.GetDisplayInfo();
         events_clear |= VIRTIO_GPU_EVENT_DISPLAY;
-        virtio_set_config(&m_VioDev, FIELD_OFFSET(GPU_CONFIG, events_clear), &events_clear, sizeof(m_u32NumScanouts));
+        virtio_set_config(&m_VioDev, FIELD_OFFSET(GPU_CONFIG, events_clear), &events_clear, sizeof(events_clear));
         //        UpdateChildStatus(FALSE);
         //        ProcessEdid();
         UpdateChildStatus(TRUE);
