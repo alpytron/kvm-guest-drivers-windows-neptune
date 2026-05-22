@@ -358,11 +358,26 @@ NTSTATUS VioGpuAdapter::SetPowerState(_In_ ULONG HardwareUid,
             case PowerDeviceUnspecified:
             case PowerDeviceD0:
                 {
-                    VioGpuAdapterInit();
+                    // Only re-init from a torn-down state. A D1/D2 -> D0
+                    // transition lands here with the adapter still live,
+                    // since D1/D2 are no-ops on this device.
+                    if (!IsHardwareInit())
+                    {
+                        VioGpuAdapterInit();
+                    }
                 }
                 break;
             case PowerDeviceD1:
             case PowerDeviceD2:
+                {
+                    // virtio-gpu exposes no D1/D2 hardware state, so
+                    // there is nothing to tear down or save; the queues
+                    // remain live and ready for D0 traffic.
+                    DbgPrint(TRACE_LEVEL_INFORMATION,
+                             ("%s entering D%d (no teardown)\n",
+                              __FUNCTION__, DevicePowerState - PowerDeviceD0));
+                }
+                break;
             case PowerDeviceD3:
                 {
                     vidpn.Powerdown();
