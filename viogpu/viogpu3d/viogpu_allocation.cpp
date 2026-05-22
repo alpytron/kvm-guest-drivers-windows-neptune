@@ -654,10 +654,6 @@ NTSTATUS VioGpuAllocation::EscapeResourceBusy(VIOGPU_RES_BUSY_REQ *resBusy)
     while (resBusy->Wait && m_busy != 0)
     {
         KeWaitForSingleObject(&m_busyNotification, UserRequest, KernelMode, FALSE, NULL);
-
-        LARGE_INTEGER wait;
-        wait.QuadPart = -10LL;
-        KeDelayExecutionThread(KernelMode, FALSE, &wait);
     }
 
     resBusy->IsBusy = m_busy != 0;
