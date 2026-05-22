@@ -266,7 +266,10 @@ NTSTATUS VioGpuAdapter::DispatchIoRequest(_In_ ULONG VidPnSourceId, _In_ VIDEO_R
     UNREFERENCED_PARAMETER(pVideoRequestPacket);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s\n", __FUNCTION__));
 
-    return STATUS_SUCCESS;
+    // The 3D driver does not implement any video IOCTLs; reporting
+    // STATUS_SUCCESS would let callers read uninitialized response
+    // data as if it had been populated.
+    return STATUS_NOT_SUPPORTED;
 }
 
 PCHAR
