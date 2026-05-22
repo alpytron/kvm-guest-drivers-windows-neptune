@@ -49,6 +49,79 @@ static void NotifyEventCompleteCB(void *ctx, void *, void *)
     KeSetEvent((PKEVENT)ctx, IO_NO_INCREMENT, FALSE);
 }
 
+//
+// Heap-allocated wait context used by synchronous Ask* helpers. A stack
+// KEVENT lets the DPC dereference a returned-stack address after the
+// caller times out; reference-count the wait context instead so the
+// caller and queue each hold a ref. The callback that fires from the
+// response DPC signals the event and drops the queue's ref; if the
+// caller has already released (timeout path), the same callback flips
+// auto_release on the vbuf so the DPC frees it on the way out.
+//
+PVIOGPU_WAIT_CTX VioGpuAllocWaitCtx()
+{
+    PVIOGPU_WAIT_CTX ctx = new (NonPagedPoolNx) VIOGPU_WAIT_CTX();
+    if (!ctx)
+    {
+        return NULL;
+    }
+    KeInitializeEvent(&ctx->event, NotificationEvent, FALSE);
+    ctx->refCount = 1;
+    ctx->vbuf = NULL;
+    return ctx;
+}
+
+void VioGpuWaitCtxCompleteCB(void *p, void *, void *)
+{
+    PVIOGPU_WAIT_CTX ctx = (PVIOGPU_WAIT_CTX)p;
+    KeSetEvent(&ctx->event, IO_NO_INCREMENT, FALSE);
+    LONG remaining = InterlockedDecrement(&ctx->refCount);
+    ASSERT(remaining >= 0);
+    if (remaining == 0)
+    {
+        // Caller already gave up its ref; flip auto_release so the DPC
+        // frees the vbuf on the way out.
+        if (ctx->vbuf)
+        {
+            ctx->vbuf->auto_release = true;
+        }
+        delete ctx;
+    }
+}
+
+BOOLEAN VioGpuWaitCtxFinish(PVIOGPU_WAIT_CTX ctx,
+                            PGPU_VBUFFER vbuf,
+                            VioGpuQueue *queue,
+                            NTSTATUS waitStatus)
+{
+    if (waitStatus != STATUS_TIMEOUT)
+    {
+        // Success path: queue already decremented in the callback.
+        LONG remaining = InterlockedDecrement(&ctx->refCount);
+        ASSERT(remaining >= 0);
+        if (remaining == 0)
+        {
+            delete ctx;
+        }
+        return TRUE;
+    }
+
+    LONG remaining = InterlockedDecrement(&ctx->refCount);
+    ASSERT(remaining >= 0);
+    if (remaining == 0)
+    {
+        // Race: queue side completed after KeWait returned TIMEOUT but
+        // before we got here. The DPC has already processed the vbuf
+        // with auto_release == false, so free it ourselves.
+        if (queue && vbuf)
+        {
+            queue->ReleaseBuffer(vbuf);
+        }
+        delete ctx;
+    }
+    return FALSE;
+}
+
 VioGpuQueue::VioGpuQueue()
 {
     m_pBuf = NULL;
@@ -194,8 +267,12 @@ BOOLEAN CtrlQueue::AskDisplayInfo(PGPU_VBUFFER *buf)
     PGPU_CTRL_HDR cmd;
     PGPU_VBUFFER vbuf;
     PGPU_RESP_DISP_INFO resp_buf;
-    KEVENT event;
     NTSTATUS status;
+
+    if (buf)
+    {
+        *buf = NULL;
+    }
 
     resp_buf = reinterpret_cast<PGPU_RESP_DISP_INFO>(new (NonPagedPoolNx) BYTE[sizeof(GPU_RESP_DISP_INFO)]);
 
@@ -210,22 +287,32 @@ BOOLEAN CtrlQueue::AskDisplayInfo(PGPU_VBUFFER *buf)
 
     cmd->type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
 
-    KeInitializeEvent(&event, NotificationEvent, FALSE);
-    vbuf->complete_cb = NotifyEventCompleteCB;
-    vbuf->complete_ctx = &event;
+    PVIOGPU_WAIT_CTX waitCtx = VioGpuAllocWaitCtx();
+    if (!waitCtx)
+    {
+        ReleaseBuffer(vbuf);
+        return FALSE;
+    }
+    waitCtx->vbuf = vbuf;
+    InterlockedIncrement(&waitCtx->refCount);
+    vbuf->complete_cb = VioGpuWaitCtxCompleteCB;
+    vbuf->complete_ctx = waitCtx;
     vbuf->auto_release = false;
 
     LARGE_INTEGER timeout = {0};
     timeout.QuadPart = Int32x32To64(1000, -10000);
 
     QueueBuffer(vbuf);
-    status = KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, &timeout);
+    status = KeWaitForSingleObject(&waitCtx->event, Executive, KernelMode, FALSE, &timeout);
 
     if (status == STATUS_TIMEOUT)
     {
-        DbgPrint(TRACE_LEVEL_FATAL, ("---> Failed to ask display info\n"));
-        VioGpuDbgBreak();
+        DbgPrint(TRACE_LEVEL_ERROR, ("---> %s timed out\n", __FUNCTION__));
+        VioGpuWaitCtxFinish(waitCtx, vbuf, this, status);
+        return FALSE;
     }
+
+    VioGpuWaitCtxFinish(waitCtx, vbuf, this, status);
     *buf = vbuf;
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
@@ -242,8 +329,12 @@ BOOLEAN CtrlQueue::AskEdidInfo(PGPU_VBUFFER *buf, UINT id)
     PGPU_CMD_GET_EDID cmd;
     PGPU_VBUFFER vbuf;
     PGPU_RESP_EDID resp_buf;
-    KEVENT event;
     NTSTATUS status;
+
+    if (buf)
+    {
+        *buf = NULL;
+    }
 
     resp_buf = reinterpret_cast<PGPU_RESP_EDID>(new (NonPagedPoolNx) BYTE[sizeof(GPU_RESP_EDID)]);
 
@@ -258,9 +349,16 @@ BOOLEAN CtrlQueue::AskEdidInfo(PGPU_VBUFFER *buf, UINT id)
     cmd->hdr.type = VIRTIO_GPU_CMD_GET_EDID;
     cmd->scanout = id;
 
-    KeInitializeEvent(&event, NotificationEvent, FALSE);
-    vbuf->complete_cb = NotifyEventCompleteCB;
-    vbuf->complete_ctx = &event;
+    PVIOGPU_WAIT_CTX waitCtx = VioGpuAllocWaitCtx();
+    if (!waitCtx)
+    {
+        ReleaseBuffer(vbuf);
+        return FALSE;
+    }
+    waitCtx->vbuf = vbuf;
+    InterlockedIncrement(&waitCtx->refCount);
+    vbuf->complete_cb = VioGpuWaitCtxCompleteCB;
+    vbuf->complete_ctx = waitCtx;
     vbuf->auto_release = false;
 
     LARGE_INTEGER timeout = {0};
@@ -268,14 +366,16 @@ BOOLEAN CtrlQueue::AskEdidInfo(PGPU_VBUFFER *buf, UINT id)
 
     QueueBuffer(vbuf);
 
-    status = KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, &timeout);
+    status = KeWaitForSingleObject(&waitCtx->event, Executive, KernelMode, FALSE, &timeout);
 
     if (status == STATUS_TIMEOUT)
     {
-        DbgPrint(TRACE_LEVEL_FATAL, ("---> Failed to get edid info\n"));
-        VioGpuDbgBreak();
+        DbgPrint(TRACE_LEVEL_ERROR, ("---> %s timed out scanout=%u\n", __FUNCTION__, id));
+        VioGpuWaitCtxFinish(waitCtx, vbuf, this, status);
+        return FALSE;
     }
 
+    VioGpuWaitCtxFinish(waitCtx, vbuf, this, status);
     *buf = vbuf;
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
@@ -317,8 +417,12 @@ BOOLEAN CtrlQueue::AskCapsetInfo(PGPU_VBUFFER *buf, ULONG idx)
     PGPU_CMD_GET_CASPSET_INFO cmd;
     PGPU_VBUFFER vbuf;
     PGPU_RESP_CAPSET_INFO resp_buf;
-    KEVENT event;
     NTSTATUS status;
+
+    if (buf)
+    {
+        *buf = NULL;
+    }
 
     resp_buf = reinterpret_cast<PGPU_RESP_CAPSET_INFO>(new (NonPagedPoolNx) BYTE[sizeof(GPU_RESP_CAPSET_INFO)]);
 
@@ -337,9 +441,16 @@ BOOLEAN CtrlQueue::AskCapsetInfo(PGPU_VBUFFER *buf, ULONG idx)
     cmd->capset_index = idx;
     cmd->padding = 0;
 
-    KeInitializeEvent(&event, NotificationEvent, FALSE);
-    vbuf->complete_cb = NotifyEventCompleteCB;
-    vbuf->complete_ctx = &event;
+    PVIOGPU_WAIT_CTX waitCtx = VioGpuAllocWaitCtx();
+    if (!waitCtx)
+    {
+        ReleaseBuffer(vbuf);
+        return FALSE;
+    }
+    waitCtx->vbuf = vbuf;
+    InterlockedIncrement(&waitCtx->refCount);
+    vbuf->complete_cb = VioGpuWaitCtxCompleteCB;
+    vbuf->complete_ctx = waitCtx;
     vbuf->auto_release = false;
 
     LARGE_INTEGER timeout = {0};
@@ -347,15 +458,20 @@ BOOLEAN CtrlQueue::AskCapsetInfo(PGPU_VBUFFER *buf, ULONG idx)
 
     QueueBuffer(vbuf);
 
-    status = KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, &timeout);
+    status = KeWaitForSingleObject(&waitCtx->event, Executive, KernelMode, FALSE, &timeout);
 
     if (status == STATUS_TIMEOUT)
     {
-        DbgPrint(TRACE_LEVEL_FATAL, ("---> Failed to get capset info\n"));
-        VioGpuDbgBreak();
+        DbgPrint(TRACE_LEVEL_ERROR,
+                 ("---> %s timed out capset_idx=%lu status=0x%x\n",
+                  __FUNCTION__,
+                  idx,
+                  status));
+        VioGpuWaitCtxFinish(waitCtx, vbuf, this, status);
         return FALSE;
     }
 
+    VioGpuWaitCtxFinish(waitCtx, vbuf, this, status);
     *buf = vbuf;
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
@@ -372,27 +488,38 @@ BOOLEAN CtrlQueue::AskCapset(PGPU_VBUFFER *buf, ULONG capset_id, ULONG capset_si
     PGPU_CMD_GET_CASPSET cmd;
     PGPU_VBUFFER vbuf;
     PGPU_RESP_CAPSET resp_buf;
-    KEVENT event;
     NTSTATUS status;
-    int resp_size = sizeof(GPU_RESP_CAPSET) + capset_size;
+    SIZE_T resp_size = (SIZE_T)sizeof(GPU_RESP_CAPSET) + capset_size;
+
+    if (buf)
+    {
+        *buf = NULL;
+    }
 
     resp_buf = reinterpret_cast<PGPU_RESP_CAPSET>(new (NonPagedPoolNx) BYTE[resp_size]);
 
     if (!resp_buf)
     {
-        DbgPrint(TRACE_LEVEL_ERROR, ("---> %s Failed allocate %d bytes\n", __FUNCTION__, sizeof(GPU_RESP_CAPSET_INFO)));
+        DbgPrint(TRACE_LEVEL_ERROR, ("---> %s Failed allocate %Iu bytes\n", __FUNCTION__, resp_size));
         return FALSE;
     }
-    cmd = (PGPU_CMD_GET_CASPSET)AllocCmdResp(&vbuf, sizeof(GPU_CMD_GET_CAPSET), resp_buf, resp_size);
+    cmd = (PGPU_CMD_GET_CASPSET)AllocCmdResp(&vbuf, sizeof(GPU_CMD_GET_CAPSET), resp_buf, (int)resp_size);
     RtlZeroMemory(cmd, sizeof(GPU_CMD_GET_CAPSET));
 
     cmd->hdr.type = VIRTIO_GPU_CMD_GET_CAPSET;
     cmd->capset_id = capset_id;
     cmd->capset_version = capset_version;
 
-    KeInitializeEvent(&event, NotificationEvent, FALSE);
-    vbuf->complete_cb = NotifyEventCompleteCB;
-    vbuf->complete_ctx = &event;
+    PVIOGPU_WAIT_CTX waitCtx = VioGpuAllocWaitCtx();
+    if (!waitCtx)
+    {
+        ReleaseBuffer(vbuf);
+        return FALSE;
+    }
+    waitCtx->vbuf = vbuf;
+    InterlockedIncrement(&waitCtx->refCount);
+    vbuf->complete_cb = VioGpuWaitCtxCompleteCB;
+    vbuf->complete_ctx = waitCtx;
     vbuf->auto_release = false;
 
     LARGE_INTEGER timeout = {0};
@@ -400,15 +527,16 @@ BOOLEAN CtrlQueue::AskCapset(PGPU_VBUFFER *buf, ULONG capset_id, ULONG capset_si
 
     QueueBuffer(vbuf);
 
-    status = KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, &timeout);
+    status = KeWaitForSingleObject(&waitCtx->event, Executive, KernelMode, FALSE, &timeout);
 
     if (status == STATUS_TIMEOUT)
     {
-        DbgPrint(TRACE_LEVEL_FATAL, ("---> Failed to get capset\n"));
-        VioGpuDbgBreak();
+        DbgPrint(TRACE_LEVEL_ERROR, ("---> %s timed out capset_id=%lu\n", __FUNCTION__, capset_id));
+        VioGpuWaitCtxFinish(waitCtx, vbuf, this, status);
         return FALSE;
     }
 
+    VioGpuWaitCtxFinish(waitCtx, vbuf, this, status);
     *buf = vbuf;
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));

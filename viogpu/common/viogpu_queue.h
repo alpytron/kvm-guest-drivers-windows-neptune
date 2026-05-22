@@ -60,6 +60,22 @@ typedef struct virtio_gpu_vbuffer
 } GPU_VBUFFER, *PGPU_VBUFFER;
 // #pragma pack()
 
+typedef struct viogpu_wait_ctx
+{
+    KEVENT event;
+    volatile LONG refCount;
+    PGPU_VBUFFER vbuf;
+} VIOGPU_WAIT_CTX, *PVIOGPU_WAIT_CTX;
+
+class VioGpuQueue;
+
+PVIOGPU_WAIT_CTX VioGpuAllocWaitCtx();
+void VioGpuWaitCtxCompleteCB(void *ctx, void *data_buf, void *resp_buf);
+BOOLEAN VioGpuWaitCtxFinish(PVIOGPU_WAIT_CTX ctx,
+                            PGPU_VBUFFER vbuf,
+                            VioGpuQueue *queue,
+                            NTSTATUS waitStatus);
+
 #define MAX_INLINE_CMD_SIZE  96
 #define MAX_INLINE_RESP_SIZE 32
 #define VBUFFER_SIZE         (sizeof(GPU_VBUFFER) + MAX_INLINE_CMD_SIZE + MAX_INLINE_RESP_SIZE)
