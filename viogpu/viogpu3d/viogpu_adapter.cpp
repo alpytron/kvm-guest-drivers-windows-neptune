@@ -1052,6 +1052,14 @@ VOID VioGpuAdapter::DpcRoutine(VOID)
     }
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 
+    // DxgkCbNotifyDpc commits the interrupt notifications that
+    // DxgkCbNotifyInterrupt queued so the scheduler acts on them. DMA
+    // completions and CRTC vsyncs are notified from the command-worker and
+    // flip threads (NotifyInterrupt -> DxgkCbQueueDpc), which do not set
+    // m_PendingWorks. Calling this only after draining a hardware ISR
+    // reason dropped every such notification, so the scheduler never
+    // observed DMA fences completing and timed the engine out. Commit
+    // unconditionally: with no pending notifications it is a cheap no-op.
     m_DxgkInterface.DxgkCbNotifyDpc((HANDLE)m_DxgkInterface.DeviceHandle);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 }
