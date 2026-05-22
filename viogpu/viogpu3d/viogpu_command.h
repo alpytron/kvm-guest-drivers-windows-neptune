@@ -26,7 +26,7 @@ class VioGpuCommand final : public HandleBase<"VIOGCOMM"_M, VioGpuCommand>
         m_pDmaBuffer = pDmaBuffer;
     }
 
-    void AttachAllocations(DXGK_ALLOCATIONLIST *allocationList, UINT allocationListLength);
+    NTSTATUS AttachAllocations(DXGK_ALLOCATIONLIST *allocationList, UINT allocationListLength);
 
     LIST_ENTRY list_entry;
 

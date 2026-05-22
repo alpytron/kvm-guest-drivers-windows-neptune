@@ -504,6 +504,30 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
         }
     }
 
+    // Register the source/destination in the driver's in-flight set
+    // (m_busy via MarkBusy) so EscapeResourceBusy from DxgkDdiDestroyAllocation
+    // sees Present-attached work, matching Render. Present's pAllocationList
+    // is a fixed-size array with index 0 reserved and source/destination at
+    // DXGK_PRESENT_SOURCE_INDEX (1) / DXGK_PRESENT_DESTINATION_INDEX (2);
+    // there is no separate length field, so the count is
+    // DXGK_PRESENT_MAX_INDEX + 1.
+    NTSTATUS attachStatus = cmd->AttachAllocations(pPresent->pAllocationList,
+                                                   DXGK_PRESENT_MAX_INDEX + 1);
+    if (!NT_SUCCESS(attachStatus))
+    {
+        if (pPresent->pDmaBufferPrivateData)
+        {
+            VioGpuCommand **privateData = (VioGpuCommand **)pPresent->pDmaBufferPrivateData;
+            if (*privateData == cmd)
+            {
+                *privateData = NULL;
+            }
+        }
+        delete cmd;
+        return attachStatus;
+    }
+
+
     if (pPresent->Flags.Blt)
     {
         if (pPresent->pDmaBuffer && dst && src)

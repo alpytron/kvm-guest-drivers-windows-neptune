@@ -188,12 +188,17 @@ end:
     delete this;
 }
 
-void VioGpuCommand::AttachAllocations(DXGK_ALLOCATIONLIST *allocationList, UINT allocationListLength)
+NTSTATUS VioGpuCommand::AttachAllocations(DXGK_ALLOCATIONLIST *allocationList, UINT allocationListLength)
 {
     PAGED_CODE();
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     m_allocations = new (NonPagedPoolNx) VioGpuAllocation *[allocationListLength];
+    if (!m_allocations)
+    {
+        m_allocationsLength = 0;
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
     m_allocationsLength = allocationListLength;
     for (UINT i = 0; i < allocationListLength; i++)
     {
@@ -208,6 +213,7 @@ void VioGpuCommand::AttachAllocations(DXGK_ALLOCATIONLIST *allocationList, UINT 
             m_allocations[i] = NULL;
         }
     }
+    return STATUS_SUCCESS;
 }
 
 PAGED_CODE_SEG_END
