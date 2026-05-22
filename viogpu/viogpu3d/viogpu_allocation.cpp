@@ -515,8 +515,11 @@ NTSTATUS VioGpuAllocation::DxgkCreateAllocation(VioGpuAdapter *adapter, DXGKARG_
             }
             else
             {
-                // FIXME
-                // allocationInfo->EvictionSegmentSet = 0b10;
+                // Use segment 2 as the eviction aperture for blob allocations.
+                // EvictionSegmentSet=0 routes VidMm through the direct-transfer
+                // path, which BuildPagingBuffer here doesn't implement, so shmem
+                // would never free.
+                allocationInfo->EvictionSegmentSet = 0b10;
                 allocationInfo->PreferredSegment.SegmentId0 = 2;
                 allocationInfo->PreferredSegment.Direction0 = 0;
                 allocationInfo->Flags.CpuVisible = !!(resourceExchange->OptionsBlob.blob_flags & VIOGPU_BLOB_FLAG_USE_MAPPABLE);
