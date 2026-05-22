@@ -1782,16 +1782,20 @@ BOOLEAN VioGpuAdapter::InterruptRoutine(_In_ ULONG MessageNumber)
         UNREFERENCED_PARAMETER(MessageNumber);
         UCHAR isrstat = virtio_read_isr_status(&m_VioDev);
 
-        switch (isrstat)
+        // Per virtio 1.x: bit 0 = queue notification, bit 1 = config change.
+        // Either or both may be set; missing the bitmask decode silently
+        // dropped queue completions when config-change rode the same INTx.
+        if (isrstat & 0x01)
         {
-            case 1:
-                intReason = (ISR_REASON_DISPLAY | ISR_REASON_CURSOR);
-                break;
-            case 3:
-                intReason = ISR_REASON_CHANGE;
-                break;
-            default:
-                serviced = FALSE;
+            intReason |= (ISR_REASON_DISPLAY | ISR_REASON_CURSOR);
+        }
+        if (isrstat & VIRTIO_PCI_ISR_CONFIG)
+        {
+            intReason |= ISR_REASON_CHANGE;
+        }
+        if (intReason == 0)
+        {
+            serviced = FALSE;
         }
     }
 
