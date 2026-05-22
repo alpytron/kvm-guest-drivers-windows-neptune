@@ -213,7 +213,11 @@ bool GetStandardTimingResolution(PSTANDARD_TIMING_DESCRIPTOR desc, PVIOGPU_DISP_
 
 bool GetVICResolution(USHORT idx, PVIOGPU_DISP_MODE mode)
 {
-    if (idx < 128 && mode)
+    // VIC codes are 1-based; idx == 0 is reserved/unused per CTA-861.
+    // Cap on the actual table size, not the 128 max VIC. Host-supplied
+    // EDID can deliver any idx; without these checks idx == 0
+    // underflowed and idx beyond the table read OOB.
+    if (idx >= 1 && idx <= RTL_NUMBER_OF(gpu_vic_mode_table) && mode)
     {
         *mode = gpu_vic_mode_table[idx - 1].Resolution;
         return true;
