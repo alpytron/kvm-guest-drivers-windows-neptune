@@ -97,8 +97,8 @@ NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuDevic
     {
         coverRect.top = min(coverRect.top, pPresent->pDstSubRects[i].top);
         coverRect.left = min(coverRect.left, pPresent->pDstSubRects[i].left);
-        coverRect.right = min(coverRect.right, pPresent->pDstSubRects[i].right);
-        coverRect.bottom = min(coverRect.bottom, pPresent->pDstSubRects[i].bottom);
+        coverRect.right = max(coverRect.right, pPresent->pDstSubRects[i].right);
+        coverRect.bottom = max(coverRect.bottom, pPresent->pDstSubRects[i].bottom);
     }
 
     INT dx = pPresent->SrcRect.left - pPresent->DstRect.left;
@@ -315,8 +315,8 @@ NTSTATUS VioGpuDevice::GenerateBltPresentUM(DXGKARG_PRESENT *pPresent, VioGpuAll
     {
         coverRect.top = min(coverRect.top, pPresent->pDstSubRects[i].top);
         coverRect.left = min(coverRect.left, pPresent->pDstSubRects[i].left);
-        coverRect.right = min(coverRect.right, pPresent->pDstSubRects[i].right);
-        coverRect.bottom = min(coverRect.bottom, pPresent->pDstSubRects[i].bottom);
+        coverRect.right = max(coverRect.right, pPresent->pDstSubRects[i].right);
+        coverRect.bottom = max(coverRect.bottom, pPresent->pDstSubRects[i].bottom);
     }
 
     if (dst->IsBlob()) {
