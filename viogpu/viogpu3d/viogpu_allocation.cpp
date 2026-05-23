@@ -28,6 +28,7 @@ VioGpuAllocation::VioGpuAllocation(VioGpuAdapter *adapter, VIOGPU_RESOURCE_BLOB_
 
     KeInitializeEvent(&m_busyNotification, NotificationEvent, TRUE);
     m_busy = 0;
+    KeInitializeSpinLock(&m_busyLock);
 
     ExInitializeFastMutex(&m_Lock);
 
@@ -57,6 +58,7 @@ VioGpuAllocation::VioGpuAllocation(VioGpuAdapter *adapter, VIOGPU_RESOURCE_3D_OP
 
     KeInitializeEvent(&m_busyNotification, NotificationEvent, TRUE);
     m_busy = 0;
+    KeInitializeSpinLock(&m_busyLock);
 
     ExInitializeFastMutex(&m_Lock);
 
@@ -74,7 +76,17 @@ void VioGpuAllocation::AddRef()
 void VioGpuAllocation::Release()
 {
     LONG newCount = InterlockedDecrement(&m_refCount);
-    ASSERT(newCount >= 0);
+    if (newCount < 0)
+    {
+        // Underflow indicates double-Release somewhere. ASSERT trips
+        // in DBG; in retail, leak the object rather than free freed
+        // memory.
+        DbgPrint(TRACE_LEVEL_ERROR,
+                 ("%s refcount underflow alloc=%p count=%d\n",
+                  __FUNCTION__, this, newCount));
+        ASSERT(newCount >= 0);
+        return;
+    }
     if (newCount == 0)
     {
         delete this;
@@ -254,8 +266,16 @@ void VioGpuAllocation::MarkBusy()
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s res_id=%d\n", __FUNCTION__, m_Id));
 
+    // Serialize counter + event mutation under m_busyLock. Without it,
+    // an interleaving where UnmarkBusy decrements to 0 and SetEvent's,
+    // then MarkBusy increments and ClearEvent's, would leave the
+    // counter > 0 with the event signalled -- causing EscapeResourceBusy
+    // to busy-spin waking immediately on every check.
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&m_busyLock, &oldIrql);
     InterlockedIncrement(&m_busy);
     KeClearEvent(&m_busyNotification);
+    KeReleaseSpinLock(&m_busyLock, oldIrql);
 }
 
 void VioGpuAllocation::UnmarkBusy()
@@ -264,10 +284,30 @@ void VioGpuAllocation::UnmarkBusy()
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s res_id=%d\n", __FUNCTION__, m_Id));
 
-    if (InterlockedDecrement(&m_busy) == 0)
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&m_busyLock, &oldIrql);
+    LONG remaining = InterlockedDecrement(&m_busy);
+    if (remaining < 0)
+    {
+        // Underflow: more UnmarkBusy than MarkBusy. Clamp back to 0
+        // and signal so a waiter doesn't see a permanently-negative
+        // counter. DBG trips the assert below.
+        InterlockedExchange(&m_busy, 0);
+        KeSetEvent(&m_busyNotification, IO_NO_INCREMENT, FALSE);
+    }
+    else if (remaining == 0)
     {
         KeSetEvent(&m_busyNotification, IO_NO_INCREMENT, FALSE);
     }
+    KeReleaseSpinLock(&m_busyLock, oldIrql);
+
+    if (remaining < 0)
+    {
+        DbgPrint(TRACE_LEVEL_ERROR,
+                 ("%s busy underflow res_id=%d remaining=%d\n",
+                  __FUNCTION__, m_Id, remaining));
+    }
+    ASSERT(remaining >= 0);
 }
 
 D3DDDIFORMAT VioGpuToD3DDDIColorFormat(virtio_gpu_formats format)
