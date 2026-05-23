@@ -93,6 +93,12 @@
   </PropertyGroup>
   <Import Project="$(MSBuildProjectDirectory)\viogpu3d.props" />
   <Import Project="$(MSBuildProjectDirectory)\..\..\build\Driver.Common.props" />
+  <!-- viogpu3d's DDInstall uses DIRID 13 (DriverStore), introduced in 10.0.16299.
+       Gate the Win10 InfArch on that build number so the [Manufacturer] decoration
+       satisfies InfVerif rule 1199 the same way the Win11 config does by default. -->
+  <PropertyGroup Condition="'$(Configuration)'=='Win10 Release' OR '$(Configuration)'=='Win10 Debug'">
+    <InfArch>$(TargetArch).10.0...16299</InfArch>
+  </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="PropertySheets">
