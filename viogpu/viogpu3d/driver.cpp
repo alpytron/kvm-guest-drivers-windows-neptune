@@ -1166,7 +1166,15 @@ APIENTRY
 VioGpu3DDdiPreemptCommand(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_PREEMPTCOMMAND *pPreemptCommand)
 {
     UNREFERENCED_PARAMETER(hAdapter);
-    UNREFERENCED_PARAMETER(pPreemptCommand);
+
+    // DxgkDdiPreemptCommand documents that any error return triggers
+    // bugcheck 0x119 (arg1=2). A NULL deref here would also AV-crash
+    // the host. Guard the argument and return SUCCESS.
+    if (!pPreemptCommand)
+    {
+        DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s null pPreemptCommand\n", __FUNCTION__));
+        return STATUS_SUCCESS;
+    }
 
     DbgPrint(TRACE_LEVEL_ERROR,
              ("<---> %s UNSUPPORTED PREEMPTION FUNCTION fence_id=%d\n",
