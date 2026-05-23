@@ -82,8 +82,22 @@ extern "C"
 
 #define VIOGPUTAG                          'OIVg'
 
-#define VIOGPU_LOG_ASSERTION0(Msg)         NT_ASSERT(FALSE)
-#define VIOGPU_LOG_ASSERTION1(Msg, Param1) NT_ASSERT(FALSE)
+// DbgPrintEx, not DbgPrint: WPP's textual scan emits a
+// WPP_CALL_<file>_cpp<line> stub only at literal DbgPrint sites, so a
+// DbgPrint nested inside this macro would expand at a line for which
+// no stub exists.
+#define VIOGPU_LOG_ASSERTION0(Msg)                                                                                     \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_ERROR_LEVEL, "ASSERTION FAILED %s: %s\n", __FUNCTION__, Msg);             \
+        NT_ASSERT(FALSE);                                                                                              \
+    } while (0)
+#define VIOGPU_LOG_ASSERTION1(Msg, Param1)                                                                             \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_ERROR_LEVEL, "ASSERTION FAILED %s: " Msg, __FUNCTION__, Param1);          \
+        NT_ASSERT(FALSE);                                                                                              \
+    } while (0)
 #define VIOGPU_ASSERT(exp)                                                                                             \
     {                                                                                                                  \
         if (!(exp))                                                                                                    \
