@@ -1795,6 +1795,15 @@ NTSTATUS VioGpuAdapter::UpdateChildStatus(BOOLEAN connect)
     DXGK_CHILD_STATUS ChildStatus;
     PDXGKRNL_INTERFACE pDXGKInterface(GetDxgkInterface());
 
+    // Dedupe against the cached state: DXGK only needs to see actual
+    // transitions, and the cache also gates the hotplug-disconnect
+    // direction.
+    if (!!m_scanoutConnected[0] == !!connect)
+    {
+        return STATUS_SUCCESS;
+    }
+    m_scanoutConnected[0] = connect ? TRUE : FALSE;
+
     RtlZeroMemory(&ChildStatus, sizeof(ChildStatus));
 
     ChildStatus.Type = StatusConnection;
@@ -1909,9 +1918,28 @@ void VioGpuAdapter::ConfigChanged(void)
         vidpn.GetDisplayInfo();
         events_clear |= VIRTIO_GPU_EVENT_DISPLAY;
         virtio_set_config(&m_VioDev, FIELD_OFFSET(GPU_CONFIG, events_clear), &events_clear, sizeof(events_clear));
-        //        UpdateChildStatus(FALSE);
-        //        ProcessEdid();
-        UpdateChildStatus(TRUE);
+
+        // Probe per-scanout enable state and emit child-status
+        // transitions in both directions. With MAX_CHILDREN==1 this
+        // only walks scanout 0, but the pattern survives a future
+        // multi-monitor refactor.
+        PGPU_VBUFFER vbuf = NULL;
+        if (ctrlQueue.AskDisplayInfo(&vbuf))
+        {
+            for (UINT i = 0; i < MAX_CHILDREN && i < m_u32NumScanouts; i++)
+            {
+                ULONG xres = 0, yres = 0;
+                BOOLEAN connected = ctrlQueue.GetDisplayInfo(vbuf, i, &xres, &yres);
+                UpdateChildStatus(connected);
+            }
+            ctrlQueue.ReleaseBuffer(vbuf);
+        }
+        else
+        {
+            // Fall back to the previous always-connect behaviour if
+            // the host did not give us info.
+            UpdateChildStatus(TRUE);
+        }
     }
 }
 

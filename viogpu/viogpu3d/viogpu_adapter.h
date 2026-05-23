@@ -76,6 +76,11 @@ class VioGpuAdapter final : public HandleBase<"VIOGADAP"_M, VioGpuAdapter>, IVio
     UINT32 m_u32NumScanouts;
     UINT64 m_supportedCapsetIDs;
 
+    // Per-scanout last-reported connect state, indexed by ChildUid.
+    // UpdateChildStatus dedupes against this so DXGK only sees real
+    // connected <-> disconnected transitions.
+    BOOLEAN m_scanoutConnected[MAX_CHILDREN] = {FALSE};
+
     ULONGLONG GetShmemPA() {
         if (!m_VioDev.shmem.available) {
             return 0;
