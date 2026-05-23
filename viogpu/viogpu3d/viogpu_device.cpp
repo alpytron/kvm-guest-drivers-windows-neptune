@@ -538,23 +538,26 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
                 GenerateBltPresentUM(pPresent, src->GetAllocation(), dst->GetAllocation());
             }
         }
+        return STATUS_SUCCESS;
     }
-    else
+
+    // Only Blt and Flip are implemented in Present. Returning
+    // NOT_SUPPORTED for ColorFill / SrcColorKey / DstColorKey /
+    // LinearToSrgb / Rotate / FlipWithNoWait lets the UMD fall back
+    // to a Render-based path; a silent NOP + SUCCESS would not.
+    DbgPrint(TRACE_LEVEL_INFORMATION,
+             ("%s unsupported Present flags=0x%x\n", __FUNCTION__,
+              pPresent->Flags.Value));
+    if (pPresent->pDmaBufferPrivateData)
     {
-        if (pPresent->pDmaBuffer)
+        VioGpuCommand **privateData = (VioGpuCommand **)pPresent->pDmaBufferPrivateData;
+        if (*privateData == cmd)
         {
-            VIOGPU_COMMAND_HDR *cmd_hdr = (VIOGPU_COMMAND_HDR *)pPresent->pDmaBuffer;
-            cmd_hdr->type = VIOGPU_CMD_NOP;
-            cmd_hdr->size = 0;
-            cmd_hdr->flags = 0;
-            cmd_hdr->ring_idx = 0;
-            pPresent->pDmaBuffer = (char *)pPresent->pDmaBuffer + sizeof(VIOGPU_COMMAND_HDR);
+            *privateData = NULL;
         }
-
-        DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s Unsupported PRESENT\n", __FUNCTION__));
     }
-
-    return STATUS_SUCCESS;
+    delete cmd;
+    return STATUS_NOT_SUPPORTED;
 }
 
 NTSTATUS VioGpuDevice::Render(DXGKARG_RENDER *pRender)
