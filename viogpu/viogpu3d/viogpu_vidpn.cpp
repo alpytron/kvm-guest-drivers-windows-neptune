@@ -5,6 +5,28 @@
 #include "edid.h"
 #include "trace.h"
 
+static const LONGLONG kVsyncPeriodFallback100ns = 166666LL; // 60 Hz
+
+// Convert a D3DDDI_RATIONAL refresh rate into a 100ns timer period.
+// Falls back to 60 Hz for missing or out-of-range inputs so callers
+// always receive a usable value.
+static LONGLONG VsyncPeriodFromRefresh(D3DDDI_RATIONAL refresh)
+{
+    if (refresh.Denominator == 0 || refresh.Numerator == 0)
+    {
+        return kVsyncPeriodFallback100ns;
+    }
+    // 10,000,000 100ns ticks per second; period = denom / numer.
+    LONGLONG num = 10000000LL * (LONGLONG)refresh.Denominator;
+    LONGLONG den = (LONGLONG)refresh.Numerator;
+    LONGLONG period = (num + den / 2) / den;
+    if (period < 10000LL || period > 1000000LL) // clamp 1000Hz .. 10Hz
+    {
+        return kVsyncPeriodFallback100ns;
+    }
+    return period;
+}
+
 PAGED_CODE_SEG_BEGIN
 
 VioGpuVidPN::VioGpuVidPN(VioGpuAdapter *adapter)
@@ -2052,9 +2074,11 @@ void VioGpuVidPN::FlipThread(void *ctx)
 
     VioGpuVidPN *vidpn = reinterpret_cast<VioGpuVidPN *>(ctx);
     LARGE_INTEGER interval;
-    interval.QuadPart = -166666LL;
     while (true)
     {
+        // Recompute the period each tick so a mode change picks up
+        // the new cadence without restarting the thread.
+        interval.QuadPart = -VsyncPeriodFromRefresh(vidpn->GetActiveRefreshRate());
         KeDelayExecutionThread(KernelMode, false, &interval);
         if (vidpn->m_shouldFlipStop)
         {
