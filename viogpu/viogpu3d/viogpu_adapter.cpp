@@ -1439,9 +1439,22 @@ void VioGpuAdapter::VioGpuAdapterClose()
 
     if (IsHardwareInit())
     {
-        SetHardwareInit(FALSE);
-        ctrlQueue.DisableInterrupt();
-        m_CursorQueue.DisableInterrupt();
+        // The ISR samples IsHardwareInit() and then dereferences
+        // ctrlQueue / m_CursorQueue / m_VioDev. Flip the flag and
+        // disable interrupts under DxgkCb-synchronisation so the
+        // ISR cannot read TRUE here and then touch state that the
+        // teardown below is about to invalidate.
+        BOOLEAN syncRet = FALSE;
+        m_DxgkInterface.DxgkCbSynchronizeExecution(
+            m_DxgkInterface.DeviceHandle,
+            [](PVOID p) -> BOOLEAN {
+                VioGpuAdapter *self = (VioGpuAdapter *)p;
+                self->SetHardwareInit(FALSE);
+                self->ctrlQueue.DisableInterrupt();
+                self->m_CursorQueue.DisableInterrupt();
+                return TRUE;
+            },
+            this, 0, &syncRet);
         virtio_device_reset(&m_VioDev);
         virtio_delete_queues(&m_VioDev);
         ctrlQueue.Close();
