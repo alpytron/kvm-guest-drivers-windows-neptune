@@ -68,3 +68,21 @@ void __cdecl operator delete(void *pObject, size_t Size)
     UNREFERENCED_PARAMETER(Size);
     ::operator delete(pObject);
 }
+
+// Placement-delete forwarders that match the placement operator new
+// overloads above. The compiler invokes these when a constructor throws
+// inside a placement-new expression; without them the linker would
+// emit "unresolved external" the moment any constructor learns to
+// throw. None of the driver's constructors currently throw, but the
+// matching pair must exist for the language to be well-formed.
+void __cdecl operator delete(void *pObject, POOL_TYPE PoolType)
+{
+    UNREFERENCED_PARAMETER(PoolType);
+    ::operator delete(pObject);
+}
+
+void __cdecl operator delete[](void *pObject, POOL_TYPE PoolType)
+{
+    UNREFERENCED_PARAMETER(PoolType);
+    ::operator delete[](pObject);
+}
