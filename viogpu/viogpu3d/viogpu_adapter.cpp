@@ -1640,9 +1640,28 @@ NTSTATUS VioGpuAdapter::HWInit(PCM_RESOURCE_LIST pResList)
         VioGpuDbgBreak();
         return status;
     }
-    ObReferenceObjectByHandle(threadHandle, THREAD_ALL_ACCESS, NULL, KernelMode, (PVOID *)(&m_pWorkThread), NULL);
-
+    // ObReferenceObjectByHandle must succeed or HWClose has no way to
+    // wait on / dereference the running kernel thread. On failure,
+    // signal the thread to exit and fail HWInit so no orphan worker
+    // outlives this call.
+    status = ObReferenceObjectByHandle(threadHandle,
+                                       THREAD_ALL_ACCESS,
+                                       NULL,
+                                       KernelMode,
+                                       (PVOID *)(&m_pWorkThread),
+                                       NULL);
     ZwClose(threadHandle);
+    if (!NT_SUCCESS(status))
+    {
+        DbgPrint(TRACE_LEVEL_FATAL,
+                 ("%s ObReferenceObjectByHandle failed status=0x%x; signalling worker to exit\n",
+                  __FUNCTION__, status));
+        m_pWorkThread = NULL;
+        m_bStopWorkThread = TRUE;
+        KeSetEvent(&m_ConfigUpdateEvent, IO_NO_INCREMENT, FALSE);
+        VioGpuDbgBreak();
+        return status;
+    }
 
     // FIXME: bar 0 is not required to be present
     PHYSICAL_ADDRESS fb_pa = m_PciResources.GetPciBar(0)->GetPA();
