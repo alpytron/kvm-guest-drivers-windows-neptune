@@ -794,7 +794,9 @@ VioGpu3DDdiCreateContext(_In_ CONST HANDLE hDevice, _Inout_ DXGKARG_CREATECONTEX
 
         pCreateContext->ContextInfo.DmaBufferSegmentSet = 0;
         pCreateContext->ContextInfo.DmaBufferSize = 1024 * 1024;
-        pCreateContext->ContextInfo.DmaBufferPrivateDataSize = 128;
+        // Per-command side-band: each submission stores one VioGpuCommand*
+        // at offset 0 (see Present/Render).
+        pCreateContext->ContextInfo.DmaBufferPrivateDataSize = sizeof(VioGpuCommand *);
 
         pCreateContext->ContextInfo.AllocationListSize = DXGK_ALLOCATION_LIST_SIZE_GDICONTEXT;
         pCreateContext->ContextInfo.PatchLocationListSize = DXGK_ALLOCATION_LIST_SIZE_GDICONTEXT;
@@ -805,7 +807,9 @@ VioGpu3DDdiCreateContext(_In_ CONST HANDLE hDevice, _Inout_ DXGKARG_CREATECONTEX
 
         pCreateContext->ContextInfo.DmaBufferSegmentSet = 0;
         pCreateContext->ContextInfo.DmaBufferSize = 1024 * 1024;
-        pCreateContext->ContextInfo.DmaBufferPrivateDataSize = 128;
+        // Per-command side-band: each submission stores one VioGpuCommand*
+        // at offset 0 (see Present/Render).
+        pCreateContext->ContextInfo.DmaBufferPrivateDataSize = sizeof(VioGpuCommand *);
 
         pCreateContext->ContextInfo.AllocationListSize = 1024;
         pCreateContext->ContextInfo.PatchLocationListSize = 1024;
