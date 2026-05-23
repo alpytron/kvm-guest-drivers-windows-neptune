@@ -300,7 +300,8 @@ NTSTATUS VioGpuDevice::GenerateBltPresentUM(DXGKARG_PRESENT *pPresent, VioGpuAll
 
     __try
     {
-        CopyFromUser(&blit, m_pBlit, sizeof(blit));
+        ProbeForRead(m_pBlit, sizeof(blit), sizeof(ULONG));
+        RtlCopyMemory(&blit, m_pBlit, sizeof(blit));
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
@@ -364,7 +365,8 @@ NTSTATUS VioGpuDevice::GenerateBltPresentUM(DXGKARG_PRESENT *pPresent, VioGpuAll
 
         __try
         {
-            CopyToUser(m_pBlit, &blit, sizeof(blit));
+            ProbeForWrite(m_pBlit, sizeof(blit), sizeof(ULONG));
+            RtlCopyMemory(m_pBlit, &blit, sizeof(blit));
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
