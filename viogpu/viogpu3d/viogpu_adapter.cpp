@@ -1064,6 +1064,17 @@ VOID VioGpuAdapter::DpcRoutine(VOID)
 VOID VioGpuAdapter::ResetDevice(VOID)
 {
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
+    // PnP fault / surprise-removal recovery path. StopDevice +
+    // VioGpuAdapterClose handle the full teardown and reinit; this
+    // DDI runs outside that flow and just needs the device left
+    // in a quiescent state: queues with interrupts disabled, then a
+    // virtio device reset.
+    if (IsHardwareInit())
+    {
+        ctrlQueue.DisableInterrupt();
+        m_CursorQueue.DisableInterrupt();
+        virtio_device_reset(&m_VioDev);
+    }
 }
 
 #pragma code_seg(pop) // End Non-Paged Code
