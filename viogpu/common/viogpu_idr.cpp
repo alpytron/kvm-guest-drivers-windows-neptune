@@ -81,9 +81,37 @@ ULONG VioGpuIdr::GetId(VOID)
 VOID VioGpuIdr::PutId(_In_ ULONG id)
 {
     DbgPrint(TRACE_LEVEL_VERBOSE, ("[%s] id = %d\n", __FUNCTION__, id));
+
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&m_lock, &oldIrql);
+
+    // Walk the free list before inserting: a double-PutId would
+    // otherwise queue the same id twice, and the next two GetIds
+    // would hand the same value to two callers -- which means two
+    // virtio-gpu objects share one host id.
+    for (PLIST_ENTRY entry = m_freeList.Flink; entry != &m_freeList; entry = entry->Flink)
+    {
+        FreeId *existing = CONTAINING_RECORD(entry, FreeId, list_entry);
+        if (existing->id == id)
+        {
+            KeReleaseSpinLock(&m_lock, oldIrql);
+            DbgPrint(TRACE_LEVEL_ERROR, ("[%s] duplicate put id=%d\n", __FUNCTION__, id));
+            ASSERT(FALSE);
+            return;
+        }
+    }
+
     FreeId *freeId = new (NonPagedPoolNx) FreeId;
+    if (!freeId)
+    {
+        KeReleaseSpinLock(&m_lock, oldIrql);
+        DbgPrint(TRACE_LEVEL_ERROR, ("[%s] alloc failed for id=%d; id will leak\n", __FUNCTION__, id));
+        return;
+    }
     freeId->id = id;
-    ExInterlockedInsertTailList(&m_freeList, &freeId->list_entry, &m_lock);
+    InsertTailList(&m_freeList, &freeId->list_entry);
+
+    KeReleaseSpinLock(&m_lock, oldIrql);
 }
 
 VOID VioGpuIdr::Close(VOID)
