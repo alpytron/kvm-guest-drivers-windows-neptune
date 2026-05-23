@@ -943,10 +943,13 @@ NTSTATUS VioGpuAdapter::StopDeviceAndReleasePostDisplayOwnership(_In_ D3DDDI_VID
     PAGED_CODE();
 
     VIOGPU_ASSERT(TargetId < MAX_CHILDREN);
-    // FIXME!!!
+    // SetPowerState's first argument is a HardwareUid -- the adapter's
+    // own DISPLAY_ADAPTER_HW_ID, not a video-target id. Passing the
+    // child TargetId here short-circuits the function (TargetId never
+    // matches DISPLAY_ADAPTER_HW_ID), so the D0 wake-up is skipped.
     if (m_MonitorPowerState > PowerDeviceD0)
     {
-        SetPowerState(TargetId, PowerDeviceD0, PowerActionNone);
+        SetPowerState(DISPLAY_ADAPTER_HW_ID, PowerDeviceD0, PowerActionNone);
     }
     vidpn.ReleasePostDisplayOwnership(TargetId, pDisplayInfo);
     return StopDevice();
