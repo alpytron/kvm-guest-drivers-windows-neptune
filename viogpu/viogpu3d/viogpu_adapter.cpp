@@ -485,9 +485,14 @@ NTSTATUS VioGpuAdapter::QueryAdapterInfo(_In_ CONST DXGKARG_QUERYADAPTERINFO *pQ
                 }
                 VIOGPU_ADAPTERINFO *info = (VIOGPU_ADAPTERINFO *)pQueryAdapterInfo->pOutputData;
                 info->IamVioGPU = VIOGPU_IAM;
-                info->Flags.Supports3d = virtio_is_feature_enabled(m_u64HostFeatures, VIRTIO_GPU_F_VIRGL) &&
-                                         virtio_is_feature_enabled(m_u64HostFeatures, VIRTIO_GPU_F_RESOURCE_BLOB) &&
-                                         virtio_is_feature_enabled(m_u64HostFeatures, VIRTIO_GPU_F_CONTEXT_INIT);
+                // Report against m_u64GuestFeatures (what was actually
+                // negotiated) so UMD never sees a flag we did not ack.
+                // virtio-gpu silently ignores unset feature bits, so an
+                // over-claimed hint would let UMD send fields the host
+                // disregards.
+                info->Flags.Supports3d = virtio_is_feature_enabled(m_u64GuestFeatures, VIRTIO_GPU_F_VIRGL) &&
+                                         virtio_is_feature_enabled(m_u64GuestFeatures, VIRTIO_GPU_F_RESOURCE_BLOB) &&
+                                         virtio_is_feature_enabled(m_u64GuestFeatures, VIRTIO_GPU_F_CONTEXT_INIT);
                 info->Flags.HasShmem = m_VioDev.shmem.available;
                 info->Flags.Reserved = 0;
                 info->SupportedCapsetIDs = m_supportedCapsetIDs;
@@ -1334,11 +1339,14 @@ NTSTATUS VioGpuAdapter::VioGpuAdapterInit()
         AckFeature(VIRTIO_F_ACCESS_PLATFORM);
 #endif
 
-        if (!AckFeature(VIRTIO_F_VERSION_1))
-        {
-            status = STATUS_UNSUCCESSFUL;
-            break;
-        }
+        // Ack the feature bits the driver implements so the host
+        // actually honours the corresponding fields in ctx_init and
+        // resource_uuid commands; an unset bit makes those fields
+        // silently ignored.
+        AckFeature(VIRTIO_GPU_F_CONTEXT_INIT);
+        AckFeature(VIRTIO_GPU_F_RESOURCE_UUID);
+        AckFeature(VIRTIO_GPU_F_VIRGL);
+        AckFeature(VIRTIO_GPU_F_RESOURCE_BLOB);
 
         status = virtio_set_features(&m_VioDev, m_u64GuestFeatures);
         if (!NT_SUCCESS(status))
