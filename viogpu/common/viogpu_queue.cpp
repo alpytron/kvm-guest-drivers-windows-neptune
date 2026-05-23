@@ -1488,26 +1488,34 @@ void VioGpuBuf::FreeBuf(_In_ PGPU_VBUFFER pbuf)
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s buf = %p\n", __FUNCTION__, pbuf));
     KeAcquireSpinLock(&m_SpinLock, &OldIrql);
 
-    if (!IsListEmpty(&m_InUseBufs))
+    // Membership check: only proceed with the free if pbuf was actually
+    // on the in-use list. A double-Free would otherwise double-delete
+    // resp_buf / data_buf and re-insert the vbuf into m_FreeBufs (or
+    // double-delete the vbuf itself), corrupting later allocations.
+    BOOLEAN found = FALSE;
+    PLIST_ENTRY leCurrent = m_InUseBufs.Flink;
+    while (leCurrent != &m_InUseBufs)
     {
-        PLIST_ENTRY leCurrent = m_InUseBufs.Flink;
         PGPU_VBUFFER pvbuf = CONTAINING_RECORD(leCurrent, GPU_VBUFFER, list_entry);
-        while (leCurrent && pvbuf)
+        if (pvbuf == pbuf)
         {
-            if (pvbuf == pbuf)
-            {
-                RemoveEntryList(leCurrent);
-                pvbuf = NULL;
-                break;
-            }
-
-            leCurrent = leCurrent->Flink;
-            if (leCurrent)
-            {
-                pvbuf = CONTAINING_RECORD(leCurrent, GPU_VBUFFER, list_entry);
-            }
+            RemoveEntryList(leCurrent);
+            found = TRUE;
+            break;
         }
+        leCurrent = leCurrent->Flink;
     }
+
+    if (!found)
+    {
+        KeReleaseSpinLock(&m_SpinLock, OldIrql);
+        DbgPrint(TRACE_LEVEL_ERROR,
+                 ("<--- %s buf=%p not on in-use list; suspected double-free\n",
+                  __FUNCTION__, pbuf));
+        ASSERT(FALSE);
+        return;
+    }
+
     if (pbuf->resp_buf && pbuf->resp_size > MAX_INLINE_RESP_SIZE)
     {
         delete[] reinterpret_cast<PBYTE>(pbuf->resp_buf);
