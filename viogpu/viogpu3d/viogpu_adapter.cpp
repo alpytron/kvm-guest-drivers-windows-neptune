@@ -1637,7 +1637,17 @@ NTSTATUS VioGpuAdapter::HWInit(PCM_RESOURCE_LIST pResList)
         }
 
     } while (0);
-    // FIXME!!! exit if the block above failed
+
+    // Propagate a negotiation failure from the do/while(0) block; the
+    // worker thread and frame segment cannot start on a half-initialised
+    // virtio device.
+    if (!NT_SUCCESS(status))
+    {
+        DbgPrint(TRACE_LEVEL_ERROR,
+                 ("%s aborting HWInit after negotiation failure status=0x%x\n",
+                  __FUNCTION__, status));
+        return status;
+    }
 
     status = PsCreateSystemThread(&threadHandle,
                                   (ACCESS_MASK)0,
