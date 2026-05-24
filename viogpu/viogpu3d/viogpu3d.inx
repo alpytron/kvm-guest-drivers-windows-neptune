@@ -36,7 +36,7 @@ vulkan_virtio.dll = 1,,
 %RHEL%=RHEL,NT$ARCH$
 
 [RHEL.NT$ARCH$]
-%VioGpu3D.DeviceDesc% = VioGpu3D_Inst, PCI\VEN_1AF4&DEV_10F7&SUBSYS_11001AF4&REV_01
+%VioGpu3D.DeviceDesc% = VioGpu3D_Inst, PCI\VEN_1AF4&DEV_1050&SUBSYS_11001AF4&REV_01, PCI\VEN_1AF4&DEV_1050
 
 [VioGpu3D_Files.Driver]
 viogpu3d.sys,,,2

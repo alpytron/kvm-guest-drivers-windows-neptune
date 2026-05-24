@@ -151,8 +151,7 @@ BOOLEAN VioGpuAdapter::CheckHardware()
     }
     DbgPrint(TRACE_LEVEL_INFORMATION,
              ("<--- %s VendorId = 0x%04X DeviceId = 0x%04X\n", __FUNCTION__, Header.VendorID, Header.DeviceID));
-    // TODO: 1050
-    if (Header.VendorID == REDHAT_PCI_VENDOR_ID && Header.DeviceID == 0x10F7)
+    if (Header.VendorID == REDHAT_PCI_VENDOR_ID && Header.DeviceID == 0x1050)
     {
         SetVgaDevice(Header.SubClass == PCI_SUBCLASS_VID_VGA_CTLR);
         return TRUE;
