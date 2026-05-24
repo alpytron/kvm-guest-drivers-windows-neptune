@@ -19,23 +19,22 @@ class VioGpuResource final : public HandleBase<"VIOGRESO"_M, VioGpuResource>
 
 class VioGpuAllocation;
 
-class VioGpuAllocationSpinLockGuard
+class VioGpuAllocationLockGuard
 {
   friend class VioGpuAllocation;
   public:
-    ~VioGpuAllocationSpinLockGuard();
+    ~VioGpuAllocationLockGuard();
   protected:
-    VioGpuAllocationSpinLockGuard(VioGpuAllocation *allocation);
+    VioGpuAllocationLockGuard(VioGpuAllocation *allocation);
   private:
     VioGpuAllocation *m_Allocation;
-    KIRQL m_Irql;
 };
 
 class VioGpuAllocation final : public HandleBase<"VIOGALLO"_M, VioGpuAllocation>
 {
   friend class VioGpuDeviceAllocation;
   friend class VioGpuDevice;
-  friend class VioGpuAllocationSpinLockGuard;
+  friend class VioGpuAllocationLockGuard;
   friend class VioGpuCommander;
   friend class VioGpuCommand;
   public:
@@ -141,12 +140,12 @@ class VioGpuAllocation final : public HandleBase<"VIOGALLO"_M, VioGpuAllocation>
     };
     ULONGLONG m_Size;
 
-    VioGpuAllocationSpinLockGuard LockGuard() {
-        return VioGpuAllocationSpinLockGuard{this};
+    VioGpuAllocationLockGuard LockGuard() {
+        return VioGpuAllocationLockGuard{this};
     }
 
-    VOID Lock(KIRQL *OldIrql);
-    VOID Unlock(KIRQL Irql);
+    VOID Lock();
+    VOID Unlock();
 
   public:
     VioGpuDeviceAllocation *Open(VioGpuDevice *pDevice);
@@ -159,7 +158,7 @@ class VioGpuAllocation final : public HandleBase<"VIOGALLO"_M, VioGpuAllocation>
     VioGpuAdapter *m_adapter;
     UINT m_Id;
 
-    KSPIN_LOCK m_Lock;
+    FAST_MUTEX m_Lock;
 
     LinkedList<VioGpuDeviceAllocation> m_DeviceAllocations;
 
