@@ -1120,7 +1120,7 @@ NTSTATUS VioGpuAdapter::ReadRegistryDWORD(_In_ HANDLE DevInstRegKeyHandle,
         if (((PKEY_VALUE_PARTIAL_INFORMATION)Buf)->Type == REG_DWORD &&
             (((PKEY_VALUE_PARTIAL_INFORMATION)Buf)->DataLength == sizeof(DWORD)))
         {
-            ASSERT(Buf.Info.DataLength == sizeof(DWORD));
+            ASSERT(((PKEY_VALUE_PARTIAL_INFORMATION)Buf)->DataLength == sizeof(DWORD));
             *pdwValue = *((PDWORD) & (((PKEY_VALUE_PARTIAL_INFORMATION)Buf)->Data));
         }
         else
