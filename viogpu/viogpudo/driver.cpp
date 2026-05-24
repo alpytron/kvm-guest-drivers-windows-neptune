@@ -73,7 +73,6 @@ extern "C" NTSTATUS DriverEntry(_In_ DRIVER_OBJECT *pDriverObject, _In_ UNICODE_
     PAGED_CODE();
     WPP_INIT_TRACING(pDriverObject, pRegistryPath);
 
-    //    VioGpuDbgBreak();
     DbgPrint(TRACE_LEVEL_FATAL, ("---> KMDOD build on on %s %s\n", __DATE__, __TIME__));
 
     KMDDOD_INITIALIZATION_DATA InitialData = {0};
