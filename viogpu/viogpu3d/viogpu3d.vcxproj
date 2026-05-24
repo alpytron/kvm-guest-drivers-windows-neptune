@@ -497,7 +497,7 @@
   </ItemGroup>
   <!--  <ItemGroup Condition="'$(BUILD_RESOLUTIONS_USERMODE)'!=''"> -->
   <ItemGroup Condition="Exists('$(MESA_PREFIX)\bin\vulkan_virtio.dll')">
-    <FilesToPackage Include="$(MESA_PREFIX)\bin\virtio_icd.x86_64.json">
+    <FilesToPackage Include="$(ProjectDir)icd\virtio_icd.json">
       <PackageRelativeDirectory>
       </PackageRelativeDirectory>
     </FilesToPackage>
@@ -515,10 +515,14 @@
     <PackOne_Files Include="..\viogpuap\$(OutDir)viogpuap.pdb" />
     <PackOne_Files Include="..\viogpusc\$(OutDir)vgpusrv.exe" />
     <PackOne_Files Include="..\viogpusc\$(OutDir)vgpusrv.pdb" />
-    <PackOne_Files Include="$(MESA_PREFIX)\bin\virtio_icd.x86_64.json" />
+    <PackOne_Files Include="$(ProjectDir)icd\virtio_icd.json" />
     <PackOne_Files Include="$(MESA_PREFIX)\bin\vulkan_virtio.dll" />
     <PackOne_Files Include="$(MESA_PREFIX)\bin\viogpu_d3d10.dll" />
   </ItemGroup>
+  <Target Name="UpdateVulkanIcdJsons" BeforeTargets="PrepareForBuild" Condition="'$(MESA_PREFIX)' != '' AND Exists('$(ProjectDir)tools\update_icd_jsons.ps1')">
+    <Message Text="Updating Vulkan ICD JSONs from $(MESA_PREFIX)" Importance="High" />
+    <Exec Command="%25SystemRoot%25\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)tools\update_icd_jsons.ps1&quot; -MesaPrefix &quot;$(MESA_PREFIX)&quot;" />
+  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="$(MSBuildProjectDirectory)\..\..\build\Driver.Common.targets" />
   <ImportGroup Label="ExtensionTargets">
