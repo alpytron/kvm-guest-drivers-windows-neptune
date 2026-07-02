@@ -152,6 +152,44 @@ void VioGpuCommand::Run()
                     return;
                 }
 
+            case VIOGPU_CMD_SUBMIT_ON_CTX:
+                {
+                    // Submit to an explicit virtio context: the payload is a
+                    // VIOGPU_SUBMIT_ON_CTX_HDR naming the target context (the
+                    // transport context that owns a swapchain the presenting
+                    // device flips) followed by the EXECBUF bytes.
+                    if (cmdHdr->size <= sizeof(VIOGPU_SUBMIT_ON_CTX_HDR))
+                    {
+                        DbgPrint(TRACE_LEVEL_ERROR,
+                                 ("%s fence_id=%d SUBMIT_ON_CTX payload too small (size=%u); skipping\n",
+                                  __FUNCTION__, m_FenceId, cmdHdr->size));
+                        goto end;
+                    }
+                    VIOGPU_SUBMIT_ON_CTX_HDR *ctxHdr = (VIOGPU_SUBMIT_ON_CTX_HDR *)cmdBody;
+                    const ULONG payloadSize = cmdHdr->size - sizeof(VIOGPU_SUBMIT_ON_CTX_HDR);
+
+                    PBYTE submitCmd = new (NonPagedPoolNx) BYTE[payloadSize];
+                    if (!submitCmd)
+                    {
+                        DbgPrint(TRACE_LEVEL_ERROR,
+                                 ("%s fence_id=%d OOM allocating submit buffer (size=%u); skipping command\n",
+                                  __FUNCTION__, m_FenceId, payloadSize));
+                        goto end;
+                    }
+                    RtlCopyMemory(submitCmd, (PBYTE)cmdBody + sizeof(VIOGPU_SUBMIT_ON_CTX_HDR),
+                                  payloadSize);
+
+                    AddPending();
+                    m_pAdapter->ctrlQueue.SubmitCommand(submitCmd,
+                                                        payloadSize,
+                                                        ctxHdr->ctx_id,
+                                                        (cmdHdr->flags & VIOGPU_EXECBUF_RING_IDX) != 0,
+                                                        cmdHdr->ring_idx,
+                                                        VioGpuCommand::QueueRunningCb,
+                                                        this);
+                    return;
+                }
+
             case VIOGPU_CMD_TRANSFER_TO_HOST:
             case VIOGPU_CMD_TRANSFER_FROM_HOST:
                 {
@@ -281,6 +319,9 @@ end:
 
     m_pCommander->CommandFinished();
 
+    // The commander runs one command at a time (VIOGPU_MAX_RUNNING == 1) and
+    // dxgkrnl serializes SubmitCommand, so completions arrive in submission
+    // order and the reported fence only ever advances.
     InterlockedExchange(&m_pAdapter->m_LastCompletedFenceId, m_FenceId);
 
     delete this;

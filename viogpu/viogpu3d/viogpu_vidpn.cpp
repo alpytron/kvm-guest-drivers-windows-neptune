@@ -2127,7 +2127,6 @@ NTSTATUS VioGpuVidPN::SetVidPnSourceAddress(const DXGKARG_SETVIDPNSOURCEADDRESS 
 
     InterlockedOr(&m_shouldFlip, 1);
 
-
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s res_id=%d isBlob=%d, vidPnSrcId=%d, duration=%lld\n",
                                    __FUNCTION__,
                                    newRes ? newRes->GetId() : 0,
@@ -2185,9 +2184,6 @@ void VioGpuVidPN::SetScanoutSource(VioGpuAllocation *res)
     {
         oldRes->ReleaseDeferred();
     }
-
-    DbgPrint(TRACE_LEVEL_INFORMATION, ("[bringup-tdr] SetScanoutSource res_id=%d isBlob=%d\n",
-                                       res ? res->GetId() : 0, res ? res->IsBlob() : 0)); // [bringup-tdr]
 
     InterlockedOr(&m_shouldFlip, 1);
 }
