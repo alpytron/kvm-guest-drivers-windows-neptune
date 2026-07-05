@@ -152,44 +152,6 @@ void VioGpuCommand::Run()
                     return;
                 }
 
-            case VIOGPU_CMD_SUBMIT_ON_CTX:
-                {
-                    // Submit to an explicit virtio context: the payload is a
-                    // VIOGPU_SUBMIT_ON_CTX_HDR naming the target context (the
-                    // transport context that owns a swapchain the presenting
-                    // device flips) followed by the EXECBUF bytes.
-                    if (cmdHdr->size <= sizeof(VIOGPU_SUBMIT_ON_CTX_HDR))
-                    {
-                        DbgPrint(TRACE_LEVEL_ERROR,
-                                 ("%s fence_id=%d SUBMIT_ON_CTX payload too small (size=%u); skipping\n",
-                                  __FUNCTION__, m_FenceId, cmdHdr->size));
-                        goto end;
-                    }
-                    VIOGPU_SUBMIT_ON_CTX_HDR *ctxHdr = (VIOGPU_SUBMIT_ON_CTX_HDR *)cmdBody;
-                    const ULONG payloadSize = cmdHdr->size - sizeof(VIOGPU_SUBMIT_ON_CTX_HDR);
-
-                    PBYTE submitCmd = new (NonPagedPoolNx) BYTE[payloadSize];
-                    if (!submitCmd)
-                    {
-                        DbgPrint(TRACE_LEVEL_ERROR,
-                                 ("%s fence_id=%d OOM allocating submit buffer (size=%u); skipping command\n",
-                                  __FUNCTION__, m_FenceId, payloadSize));
-                        goto end;
-                    }
-                    RtlCopyMemory(submitCmd, (PBYTE)cmdBody + sizeof(VIOGPU_SUBMIT_ON_CTX_HDR),
-                                  payloadSize);
-
-                    AddPending();
-                    m_pAdapter->ctrlQueue.SubmitCommand(submitCmd,
-                                                        payloadSize,
-                                                        ctxHdr->ctx_id,
-                                                        (cmdHdr->flags & VIOGPU_EXECBUF_RING_IDX) != 0,
-                                                        cmdHdr->ring_idx,
-                                                        VioGpuCommand::QueueRunningCb,
-                                                        this);
-                    return;
-                }
-
             case VIOGPU_CMD_TRANSFER_TO_HOST:
             case VIOGPU_CMD_TRANSFER_FROM_HOST:
                 {
@@ -203,43 +165,6 @@ void VioGpuCommand::Run()
                                                           transferCmd,
                                                           VioGpuCommand::QueueRunningCb,
                                                           this);
-                    return;
-                }
-
-            case VIOGPU_CMD_UNMAP_BLOB_BY_ID:
-                {
-                    // DISCARD_CONTENT paging op: tear down the host mapping
-                    // of every listed res_id.  VidMm frees the segment range
-                    // when a dead process's blob is discarded, and a stale
-                    // host mapping there poisons the next blob mapped into
-                    // the reused range.
-                    const UINT *res_ids = (const UINT *)cmdBody;
-                    const size_t count = cmdHdr->size / sizeof(UINT);
-
-                    AddPending();
-                    for (size_t i = 0; i < count; i++)
-                    {
-                        if (!res_ids[i])
-                        {
-                            continue;
-                        }
-                        AddPending();
-                        static LONG s_discardLogCount = 0;
-                        const LONG dlogN = InterlockedIncrement(&s_discardLogCount);
-                        if (dlogN <= 16 || (dlogN & 63) == 0)
-                        {
-                            DbgPrint(TRACE_LEVEL_WARNING,
-                                     ("<---> %s fence_id=%d DISCARD-unmap blob res_id=%d n=%d\n",
-                                      __FUNCTION__, m_FenceId, res_ids[i], dlogN));
-                        }
-                        m_pAdapter->ctrlQueue.ResourceUnmapBlob(res_ids[i], 0,
-                                                                VioGpuCommand::QueueRunningCb,
-                                                                this);
-                    }
-                    if (DropPending() == 0)
-                    {
-                        break;
-                    }
                     return;
                 }
 
@@ -557,6 +482,10 @@ NTSTATUS VioGpuCommander::Patch(const DXGKARG_PATCH *pPatch)
         const DXGK_ALLOCATIONLIST *allocList = &pPatch->pAllocationList[i];
         VioGpuDeviceAllocation *deviceAllocation = VioGpuDeviceAllocation::FromHandle(allocList->hDeviceSpecificAllocation);
         VioGpuAllocation *allocation = deviceAllocation ? deviceAllocation->GetAllocation() : nullptr;
+        if (allocation)
+        {
+            allocation->m_SegmentAddress = allocList->PhysicalAddress;
+        }
         if (allocation && allocation->IsBlob())
         {
 
@@ -595,6 +524,7 @@ NTSTATUS VioGpuCommander::SubmitCommand(const DXGKARG_SUBMITCOMMAND *pSubmitComm
     }
 
     cmd->PrepareSubmit(pSubmitCommand);
+    InterlockedExchange(&m_pAdapter->m_LastSubmittedFenceId, pSubmitCommand->SubmissionFenceId);
     QueueSubmitted(cmd);
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));

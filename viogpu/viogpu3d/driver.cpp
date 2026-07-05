@@ -635,33 +635,15 @@ VioGpu3DBuildPagingBuffer(_In_ CONST HANDLE hAdapter, _In_ DXGKARG_BUILDPAGINGBU
                                                allocation->IsBlob()));
 
                 // VidMm is freeing this allocation's segment range for reuse.
-                // A mappable blob's HOST mapping must die with it: dead
-                // processes never send their UMD-side unmap, and the next
-                // blob mapped into the reused range reads the stale window.
-                // Emit the unmap into the paging DMA so it retires in paging
-                // order.
-                if (allocation->IsBlob() && allocation->IsMappable() && allocation->GetId() != 0)
-                {
-                    const SIZE_T needed = sizeof(VIOGPU_COMMAND_HDR) + sizeof(UINT);
-                    if (pBuildPagingBuffer->pDmaBuffer && pBuildPagingBuffer->DmaSize >= needed)
-                    {
-                        BYTE *dma = (BYTE *)pBuildPagingBuffer->pDmaBuffer;
-                        VIOGPU_COMMAND_HDR hdr;
-                        RtlZeroMemory(&hdr, sizeof(hdr));
-                        hdr.type = VIOGPU_CMD_UNMAP_BLOB_BY_ID;
-                        hdr.size = sizeof(UINT);
-                        UINT rid = allocation->GetId();
-                        RtlCopyMemory(dma, &hdr, sizeof(hdr));
-                        RtlCopyMemory(dma + sizeof(hdr), &rid, sizeof(rid));
-                        pBuildPagingBuffer->pDmaBuffer = dma + needed;
-                    }
-                    else
-                    {
-                        DbgPrint(TRACE_LEVEL_ERROR,
-                                 ("<--- %s discard res_id=%d: paging DMA too small (%u)\n",
-                                  __FUNCTION__, allocation->GetId(), pBuildPagingBuffer->DmaSize));
-                    }
-                }
+                // A mappable blob's HOST mapping ideally dies with it (dead
+                // processes never send their UMD-side unmap), but no
+                // UNMAP_BLOB is emitted from the paging DMA: QEMU's unmap
+                // completion is asynchronous (RCU-deferred region teardown)
+                // and under process churn a suspended unmap parks the paging
+                // fence past dxgkrnl's TDR budget (a ResetFromTimeout within
+                // seconds of DISCARD bursts).  The stale-window concern is
+                // better fixed host-side by making RES_UNREF drop any live
+                // mapping when the blob is destroyed.
 
                 return STATUS_SUCCESS;
             }
@@ -1361,6 +1343,15 @@ VioGpu3DDdiCollectDbgInfo(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_COLLECT
     UNREFERENCED_PARAMETER(pCollectDbgInfo);
 
     DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s UNSUPPORTED PREEMPTION FUNCTION\n", __FUNCTION__));
+    {
+        VioGpuAdapter *adapter = VioGpuAdapter::FromHandle(hAdapter);
+        if (adapter)
+        {
+            DbgPrint(TRACE_LEVEL_ERROR,
+                     ("<---> %s fence submitted=%d completed=%d\n", __FUNCTION__,
+                      adapter->m_LastSubmittedFenceId, adapter->m_LastCompletedFenceId));
+        }
+    }
 
     return STATUS_SUCCESS;
 };
@@ -1372,6 +1363,15 @@ VioGpu3DDdiResetFromTimeout(_In_ CONST HANDLE hAdapter)
     UNREFERENCED_PARAMETER(hAdapter);
 
     DbgPrint(TRACE_LEVEL_ERROR, ("<---> %s UNSUPPORTED PREEMPTION FUNCTION\n", __FUNCTION__));
+    {
+        VioGpuAdapter *adapter = VioGpuAdapter::FromHandle(hAdapter);
+        if (adapter)
+        {
+            DbgPrint(TRACE_LEVEL_ERROR,
+                     ("<---> %s fence submitted=%d completed=%d\n", __FUNCTION__,
+                      adapter->m_LastSubmittedFenceId, adapter->m_LastCompletedFenceId));
+        }
+    }
 
     return STATUS_SUCCESS;
 };

@@ -300,7 +300,7 @@ BOOLEAN CtrlQueue::AskDisplayInfo(PGPU_VBUFFER *buf)
     vbuf->auto_release = false;
 
     LARGE_INTEGER timeout = {0};
-    timeout.QuadPart = Int32x32To64(1000, -10000);
+    timeout.QuadPart = Int32x32To64(10000, -10000);
 
     QueueBuffer(vbuf);
     status = KeWaitForSingleObject(&waitCtx->event, Executive, KernelMode, FALSE, &timeout);
@@ -367,7 +367,7 @@ BOOLEAN CtrlQueue::AskEdidInfo(PGPU_VBUFFER *buf, UINT id)
     vbuf->auto_release = false;
 
     LARGE_INTEGER timeout = {0};
-    timeout.QuadPart = Int32x32To64(1000, -10000);
+    timeout.QuadPart = Int32x32To64(10000, -10000);
 
     QueueBuffer(vbuf);
 
@@ -482,7 +482,7 @@ BOOLEAN CtrlQueue::AskCapsetInfo(PGPU_VBUFFER *buf, ULONG idx)
     vbuf->auto_release = false;
 
     LARGE_INTEGER timeout = {0};
-    timeout.QuadPart = Int32x32To64(1000, -10000);
+    timeout.QuadPart = Int32x32To64(10000, -10000);
 
     QueueBuffer(vbuf);
 
@@ -556,7 +556,7 @@ BOOLEAN CtrlQueue::AskCapset(PGPU_VBUFFER *buf, ULONG capset_id, ULONG capset_si
     vbuf->auto_release = false;
 
     LARGE_INTEGER timeout = {0};
-    timeout.QuadPart = Int32x32To64(1000, -10000);
+    timeout.QuadPart = Int32x32To64(10000, -10000);
 
     if (QueueBuffer(vbuf) == (UINT)-1)
     {
@@ -690,7 +690,7 @@ bool CtrlQueue::CreateResourceBlob(UINT res_id, UINT ctx_id, VIOGPU_RESOURCE_BLO
     vbuf->auto_release = false;
 
     LARGE_INTEGER timeout = {0};
-    timeout.QuadPart = Int32x32To64(1000, -10000);
+    timeout.QuadPart = Int32x32To64(10000, -10000);
 
     QueueBuffer(vbuf);
 
