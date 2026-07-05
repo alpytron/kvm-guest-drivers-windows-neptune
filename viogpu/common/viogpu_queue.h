@@ -57,6 +57,13 @@ typedef struct virtio_gpu_vbuffer
     void *complete_ctx;
 
     bool auto_release;
+    /* Interlocked once-guard for complete_cb: both the response DPC and
+     * VioGpuBuf::Close (teardown drain) can reach a vbuf that is still
+     * on m_InUseBufs (the DPC fires the callback before the owner frees
+     * the vbuf), and a double fire KeSetEvents a wait-context that the
+     * first fire may already have freed (bugcheck 0xA in
+     * VioGpuWaitCtxCompleteCB). */
+    LONG complete_fired;
 } GPU_VBUFFER, *PGPU_VBUFFER;
 // #pragma pack()
 
@@ -205,6 +212,9 @@ class VioGpuQueue
     {
         if (m_pVirtQueue)
         {
+            /* Must be kick_ALWAYS: this virtio-gpu host does not reliably drive
+             * notify suppression, so a suppression-aware virtqueue_kick() misses
+             * the notify and hangs the display-driver load. */
             virtqueue_kick_always(m_pVirtQueue);
         }
     }
