@@ -400,14 +400,12 @@ VioGpuAllocationLockGuard::~VioGpuAllocationLockGuard()
     m_Allocation->Unlock();
 }
 
-PAGED_CODE_SEG_BEGIN
-
+// NONPAGED: called from VioGpuCommand::Run / AttachAllocations on the
+// commander thread at DISPATCH_LEVEL (spinlocks held). Living in the
+// PAGE segment bugchecks 0xD1 (instruction-fetch of paged-out code at
+// IRQL 2) when UnmarkBusy is reached from Run.
 void VioGpuAllocation::MarkBusy()
 {
-    PAGED_CODE();
-
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s res_id=%d\n", __FUNCTION__, m_Id));
-
     // Serialize counter + event mutation under m_busyLock. Without it,
     // an interleaving where UnmarkBusy decrements to 0 and SetEvent's,
     // then MarkBusy increments and ClearEvent's, would leave the
@@ -422,10 +420,6 @@ void VioGpuAllocation::MarkBusy()
 
 void VioGpuAllocation::UnmarkBusy()
 {
-    PAGED_CODE();
-
-    DbgPrint(TRACE_LEVEL_VERBOSE, ("<--> %s res_id=%d\n", __FUNCTION__, m_Id));
-
     KIRQL oldIrql;
     KeAcquireSpinLock(&m_busyLock, &oldIrql);
     LONG remaining = InterlockedDecrement(&m_busy);
@@ -451,6 +445,8 @@ void VioGpuAllocation::UnmarkBusy()
     }
     ASSERT(remaining >= 0);
 }
+
+PAGED_CODE_SEG_BEGIN
 
 D3DDDIFORMAT VioGpuToD3DDDIColorFormat(virtio_gpu_formats format)
 {
