@@ -1827,7 +1827,12 @@ PBYTE VioGpuVidPN::GetCTA861Data(void)
         PEDID_DATA_V1 edid_data = (PEDID_DATA_V1)m_EDIDs;
         if (edid_data->ExtensionFlag)
         {
-            PEDID_CTA_861 cta_data = (PEDID_CTA_861)(m_EDIDs + EDID_V1_BLOCK_SIZE);
+            // m_EDIDs is BYTE[MAX_CHILDREN][EDID_RAW_BLOCK_SIZE]; "m_EDIDs +
+            // EDID_V1_BLOCK_SIZE" advances 128 ROWS (128*256 bytes past the
+            // array), not 128 bytes -- wild OOB read, bugcheck 0x50 in
+            // GetCTA861Data when the stray page is unmapped. The CTA-861
+            // extension block sits 128 bytes into scanout 0's raw EDID.
+            PEDID_CTA_861 cta_data = (PEDID_CTA_861)(m_EDIDs[0] + EDID_V1_BLOCK_SIZE);
             if (cta_data->ExtentionTag[0] >= 2 && cta_data->Revision[0] >= 3)
             {
                 return (PBYTE)cta_data;
