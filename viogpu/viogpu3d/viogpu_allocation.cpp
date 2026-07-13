@@ -37,6 +37,9 @@ VioGpuAllocation::VioGpuAllocation(VioGpuAdapter *adapter, VIOGPU_RESOURCE_BLOB_
 
     m_refCount = 1;
     m_deferReleaseItem = IoAllocateWorkItem(m_adapter->GetPhysicalDevice());
+    m_deferReleaseCount = 0;
+    m_deferReleaseQueued = 0;
+    KeInitializeDpc(&m_deferReleaseDpc, VioGpuAllocation::DeferredReleaseDpc, this);
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s res_id=%d blob_id=%lld\n", __FUNCTION__, m_Id, m_Blob.Options.blob_id));
 }
@@ -70,6 +73,9 @@ VioGpuAllocation::VioGpuAllocation(VioGpuAdapter *adapter, VIOGPU_RESOURCE_3D_OP
 
     m_refCount = 1;
     m_deferReleaseItem = IoAllocateWorkItem(m_adapter->GetPhysicalDevice());
+    m_deferReleaseCount = 0;
+    m_deferReleaseQueued = 0;
+    KeInitializeDpc(&m_deferReleaseDpc, VioGpuAllocation::DeferredReleaseDpc, this);
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s res_id=%d 3D\n", __FUNCTION__, m_Id));
 }
@@ -114,6 +120,9 @@ VioGpuAllocation::VioGpuAllocation(VioGpuAdapter *adapter, VIOGPU_RESOURCE_IMPOR
 
     m_refCount = 1;
     m_deferReleaseItem = IoAllocateWorkItem(m_adapter->GetPhysicalDevice());
+    m_deferReleaseCount = 0;
+    m_deferReleaseQueued = 0;
+    KeInitializeDpc(&m_deferReleaseDpc, VioGpuAllocation::DeferredReleaseDpc, this);
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s IMPORT res_id=%d size=%lld\n", __FUNCTION__, m_Id, size));
 }
@@ -161,6 +170,9 @@ VioGpuAllocation::VioGpuAllocation(VioGpuAdapter *adapter, VIOGPU_RESOURCE_SHARE
 
     m_refCount = 1;
     m_deferReleaseItem = IoAllocateWorkItem(m_adapter->GetPhysicalDevice());
+    m_deferReleaseCount = 0;
+    m_deferReleaseQueued = 0;
+    KeInitializeDpc(&m_deferReleaseDpc, VioGpuAllocation::DeferredReleaseDpc, this);
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s SHARED res_id=%d blob_id=0x%llx size=%lld\n", __FUNCTION__,
                                    m_Id, options->blob_id, size));
@@ -191,23 +203,70 @@ void VioGpuAllocation::Release()
     }
 }
 
-void VioGpuAllocation::ReleaseDeferred()
+// Requires IRQL <= DISPATCH_LEVEL. Only the caller that flips
+// m_deferReleaseQueued gets to queue the single pre-allocated work item;
+// the rest coalesce onto it through m_deferReleaseCount.
+void VioGpuAllocation::QueueDeferredReleaseWorkItem()
 {
-    // The destructor tears down LinkedList<VioGpuDeviceAllocation>, whose
-    // entries' dtor is PAGED_CODE(). A Release that drops the last ref
-    // from a DPC (or higher) would trip that contract. At raised IRQL,
-    // hand the Release to the pre-allocated work item so the destructor
-    // lands at PASSIVE_LEVEL.
-    if (m_deferReleaseItem && KeGetCurrentIrql() >= DISPATCH_LEVEL)
+    if (InterlockedCompareExchange(&m_deferReleaseQueued, 1, 0) == 0)
     {
         IoQueueWorkItem(m_deferReleaseItem,
                         VioGpuAllocation::DeferredReleaseWorker,
                         DelayedWorkQueue,
                         this);
     }
-    else
+}
+
+VOID NTAPI VioGpuAllocation::DeferredReleaseDpc(_KDPC *Dpc, PVOID Context, PVOID Arg1, PVOID Arg2)
+{
+    UNREFERENCED_PARAMETER(Dpc);
+    UNREFERENCED_PARAMETER(Arg1);
+    UNREFERENCED_PARAMETER(Arg2);
+
+    reinterpret_cast<VioGpuAllocation *>(Context)->QueueDeferredReleaseWorkItem();
+}
+
+void VioGpuAllocation::ReleaseDeferred()
+{
+    // The destructor tears down LinkedList<VioGpuDeviceAllocation>, whose
+    // entries' dtor is PAGED_CODE(). A Release that drops the last ref
+    // from a DPC (or higher) would trip that contract, so at raised IRQL the
+    // Release is punted to a work item that runs at PASSIVE_LEVEL.
+    //
+    // IoQueueWorkItem is itself only callable at IRQL <= DISPATCH_LEVEL, and
+    // this function is reached above that: with FlipOnVSyncMmIo,
+    // dxgmms1!VidSchiExecuteMmIoFlipAtISR invokes DdiSetVidPnSourceAddress
+    // through KeSynchronizeExecution, i.e. at DIRQL holding the interrupt spin
+    // lock. Queuing a work item from there deadlocks the machine in
+    // nt!KiExitDispatcher -> HalpInterruptSendIpi ->
+    // nt!KxWaitForSpinLockAndAcquire, and every other VidSch caller then piles
+    // up behind the lock that is never released. A DPC may be queued from any
+    // IRQL and runs at DISPATCH_LEVEL, so above DISPATCH_LEVEL hop through one
+    // and let it queue the work item.
+    if (!m_deferReleaseItem)
     {
         Release();
+        return;
+    }
+
+    KIRQL irql = KeGetCurrentIrql();
+    if (irql < DISPATCH_LEVEL)
+    {
+        Release();
+        return;
+    }
+
+    InterlockedIncrement(&m_deferReleaseCount);
+
+    if (irql > DISPATCH_LEVEL)
+    {
+        // KeInsertQueueDpc returning FALSE just means the DPC is already
+        // queued; that pending DPC will drain the count we just bumped.
+        KeInsertQueueDpc(&m_deferReleaseDpc, NULL, NULL);
+    }
+    else
+    {
+        QueueDeferredReleaseWorkItem();
     }
 }
 
@@ -215,7 +274,26 @@ VOID NTAPI VioGpuAllocation::DeferredReleaseWorker(PDEVICE_OBJECT DeviceObject, 
 {
     UNREFERENCED_PARAMETER(DeviceObject);
     VioGpuAllocation *alloc = reinterpret_cast<VioGpuAllocation *>(Context);
-    alloc->Release();
+
+    // Claim the pending count before re-arming, never the other way round: a
+    // ReleaseDeferred that bumps the count after the re-arm would queue a
+    // second work item, and this one could meanwhile drop that reference and
+    // destroy `alloc` out from under it. A count bumped in the window between
+    // the two exchanges found the queue flag still set and so did not re-arm
+    // itself; pick it up here.
+    LONG pending = InterlockedExchange(&alloc->m_deferReleaseCount, 0);
+    InterlockedExchange(&alloc->m_deferReleaseQueued, 0);
+    if (alloc->m_deferReleaseCount != 0)
+    {
+        alloc->QueueDeferredReleaseWorkItem();
+    }
+
+    // `pending` is at least 1, so `alloc` is live for everything above; the
+    // Releases below may free it, so touch no member past this point.
+    while (pending-- > 0)
+    {
+        alloc->Release();
+    }
 }
 
 void NotifyResourceDestroyed(void *ctx, void *cmd, void *)
@@ -235,6 +313,11 @@ VioGpuAllocation::~VioGpuAllocation(void)
     PAGED_CODE();
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s res_id=%d IsBlob=%d alloc=%p size=%zu\n", __FUNCTION__, m_Id, m_IsBlob, this, m_DeviceAllocations.size()));
+
+    // A pending deferred release always holds a reference, so the DPC cannot
+    // normally still be queued here; dequeue it anyway rather than leave a
+    // callback pointing at freed memory.
+    KeRemoveQueueDpc(&m_deferReleaseDpc);
 
     if (m_deferReleaseItem)
     {

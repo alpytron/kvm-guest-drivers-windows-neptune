@@ -542,9 +542,22 @@ NTSTATUS VioGpuAdapter::QueryAdapterInfo(_In_ CONST DXGKARG_QUERYADAPTERINFO *pQ
                 // (no MMIO PhysicalAddress is required); VioGpuDevice::Present
                 // latches the new primary in m_sourceRes and the vsync Flip
                 // scans it out by res_id.
-                pDriverCaps->FlipCaps.FlipOnVSyncMmIo = FALSE;
+                // TRUE routes every flip-model present through
+                // DxgkDdiSetVidPnSourceAddress (which this driver fully
+                // implements, incl. DIRQL) with the exact PrimaryAddress
+                // dxgkrnl later matches against the vsync-reported
+                // address. With FALSE, flips rode an empty Present
+                // packet, the vsync reported a stale/zero address, no
+                // queued flip ever CONFIRMED: DWM cFrameComplete stayed
+                // 0 forever, refresh stats collapsed (~2 Hz), and UWP
+                // apps never dismissed their splash (calc blank).
+                pDriverCaps->FlipCaps.FlipOnVSyncMmIo = TRUE;
 
-                pDriverCaps->MaxQueuedFlipOnVSync = 0;
+                // 0 told dxgkrnl this display can't queue flips at all;
+                // windowed flip-model (composition) presents were never
+                // bound by DWM (calc/UWP splash-blank, d3dtest9 probe
+                // invisible). Allow one queued flip per vsync.
+                pDriverCaps->MaxQueuedFlipOnVSync = 1;
 
                 pDriverCaps->MemoryManagementCaps.SectionBackedPrimary = TRUE;
 

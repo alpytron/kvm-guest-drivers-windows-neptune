@@ -236,6 +236,8 @@ class VioGpuAllocation final : public HandleBase<"VIOGALLO"_M, VioGpuAllocation>
     inline BOOLEAN UnmapBlobLocked(UINT ctx_id, void (*complete_cb)(void *, void *, void *), void *complete_ctx);
 
     static VOID NTAPI DeferredReleaseWorker(PDEVICE_OBJECT DeviceObject, PVOID Context);
+    static VOID NTAPI DeferredReleaseDpc(_KDPC *Dpc, PVOID Context, PVOID Arg1, PVOID Arg2);
+    void QueueDeferredReleaseWorkItem();
 
     VioGpuAdapter *m_adapter;
     UINT m_Id;
@@ -261,6 +263,14 @@ class VioGpuAllocation final : public HandleBase<"VIOGALLO"_M, VioGpuAllocation>
     // arm of DxgkDdiSetVidPnSourceAddress) without risking
     // IoAllocateWorkItem failure on the hot path.
     PIO_WORKITEM m_deferReleaseItem;
+
+    // Trampoline for ReleaseDeferred callers above DISPATCH_LEVEL, where
+    // IoQueueWorkItem may not be called at all; see ReleaseDeferred. The count
+    // lets repeat calls coalesce onto the single DPC and work item without
+    // losing a reference.
+    KDPC m_deferReleaseDpc;
+    volatile LONG m_deferReleaseCount;
+    volatile LONG m_deferReleaseQueued;
 };
 
 extern void NotifyResourceDestroyed(void *ctx, void *cmd, void *resp);

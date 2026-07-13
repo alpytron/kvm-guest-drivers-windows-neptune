@@ -91,6 +91,33 @@ NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuDevic
 
     UCHAR *dmaBuf = (UCHAR *)pPresent->pDmaBuffer;
 
+    // The virgl shadow context is normally created by the UMD's
+    // VIOGPU_CTX_INIT escape (VioGpu3DEscape). The GDI/System device that
+    // carries the basic-model shadow->primary blt presents never runs that
+    // escape, so m_Virgl holds only a guest-minted id with NO host context
+    // behind it -- every CtxResource attach and SUBMIT below is silently
+    // dropped by the host and the primary never receives the blt (frozen
+    // black desktop). Create the host context lazily on first use.
+    if (m_Virgl.IsEmpty())
+    {
+        bool has_virgl  = !!(m_pAdapter->m_supportedCapsetIDs & (1llu << VIRTIO_GPU_CAPSET_VIRGL));
+        bool has_virgl2 = !!(m_pAdapter->m_supportedCapsetIDs & (1llu << VIRTIO_GPU_CAPSET_VIRGL2));
+        if (has_virgl || has_virgl2)
+        {
+            VIOGPU_CTX_INIT_REQ VirglCtx;
+            memset(&VirglCtx, 0, sizeof(VirglCtx));
+            VirglCtx.CapsetID = has_virgl2 ? VIRTIO_GPU_CAPSET_VIRGL2 : VIRTIO_GPU_CAPSET_VIRGL;
+            VirglCtx.NumRings = 64;
+            memcpy(VirglCtx.DebugName, "virgl-gdi-blt", sizeof("virgl-gdi-blt") - 1);
+            m_Virgl.Init(&VirglCtx);
+        }
+        else
+        {
+            DbgPrint(TRACE_LEVEL_ERROR, ("%s no virgl capset for blt present\n", __FUNCTION__));
+            return STATUS_UNSUCCESSFUL;
+        }
+    }
+
     // Calculate rect covering all SubRectx
     RECT coverRect = pPresent->pDstSubRects[0];
     for (UINT i = 1; i < pPresent->SubRectCnt; i++)
@@ -113,6 +140,16 @@ NTSTATUS VioGpuDevice::GenerateBltPresent(DXGKARG_PRESENT *pPresent, VioGpuDevic
         cmd_hdr->flags = 0;
         cmd_hdr->ring_idx = 0;
         dmaBuf += sizeof(VIOGPU_COMMAND_HDR);
+
+        // Route through the virgl shadow ctx like every other command in
+        // this packet: m_Context is uninitialized for the GDI/System
+        // device, and a TRANSFER_TO_HOST_3D on a nonexistent ctx is
+        // rejected by the host (EINVAL) -- the shadow surface pixels never
+        // reach the host texture and the desktop blits stay black.
+        if (!m_Context.IsVirgl())
+        {
+            cmd_hdr->flags |= VIOGPU_EXECBUF_VIRGL;
+        }
 
         VIOGPU_TRANSFER_CMD *cmdBody = (VIOGPU_TRANSFER_CMD *)dmaBuf;
         dmaBuf += sizeof(VIOGPU_TRANSFER_CMD);
@@ -464,8 +501,16 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
             VioGpuDeviceAllocation *srcDev =
                 VioGpuDeviceAllocation::FromHandle(dxgk_src->hDeviceSpecificAllocation);
             srcAlloc = srcDev ? srcDev->GetAllocation() : NULL;
+            // Latch only the RESOURCE here. With FlipOnVSyncMmIo the
+            // flip's PrimaryAddress is programmed by
+            // DxgkDdiSetVidPnSourceAddress, and THAT address must be
+            // what the vsync reports; letting the (earlier) Present
+            // latch overwrite m_sourceAddress raced the queued flip's
+            // address match and dxgkrnl TDR'd an idle engine
+            // (0x117 LiveKernelEvent, submitted==completed).
+            PHYSICAL_ADDRESS zeroAddr = {};
             if (srcAlloc && srcAlloc->IsPrimary())
-                m_pAdapter->vidpn.SetScanoutSource(srcAlloc, dxgk_src->PhysicalAddress);
+                m_pAdapter->vidpn.SetScanoutSource(srcAlloc, zeroAddr);
         }
 
         // No host command is needed for a flip: the primary IS the blob
@@ -572,9 +617,21 @@ NTSTATUS VioGpuDevice::Present(_Inout_ DXGKARG_PRESENT *pPresent)
         if (src)
         {
             VioGpuAllocation *srcAlloc = src->GetAllocation();
+            // See the Flip branch: never let a present-path latch
+            // overwrite the MMIO-flip address the vsync must report.
+            PHYSICAL_ADDRESS zeroBltAddr = {};
             if (srcAlloc && srcAlloc->IsPrimary())
-                m_pAdapter->vidpn.SetScanoutSource(srcAlloc,
-                                                   dxgk_src->PhysicalAddress);
+                m_pAdapter->vidpn.SetScanoutSource(srcAlloc, zeroBltAddr);
+        }
+        // Re-flush the scanout when the blt writes into the resource being
+        // scanned out (GDI shared-primary model; see RearmFlipIfScanout).
+        if (dst)
+        {
+            VioGpuAllocation *dstBltAlloc = dst->GetAllocation();
+            if (dstBltAlloc)
+            {
+                m_pAdapter->vidpn.RearmFlipIfScanout(dstBltAlloc);
+            }
         }
         if (pPresent->pDmaBuffer && dst && src)
         {

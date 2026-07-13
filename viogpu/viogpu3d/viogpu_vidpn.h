@@ -114,6 +114,7 @@ class VioGpuVidPN
     // progressing across flips.  Callers without an address (creation-
     // time promotion) pass {0}, which leaves the reported address alone.
     void SetScanoutSource(VioGpuAllocation *res, PHYSICAL_ADDRESS addr);
+    void RearmFlipIfScanout(VioGpuAllocation *res);
     inline void SetScanoutSource(VioGpuAllocation *res)
     {
         PHYSICAL_ADDRESS zero = {};
@@ -137,6 +138,37 @@ class VioGpuVidPN
                                  D3DDDI_VIDEO_PRESENT_SOURCE_ID SourceId);
     D3DDDI_VIDEO_PRESENT_SOURCE_ID FindSourceForTarget(D3DDDI_VIDEO_PRESENT_TARGET_ID TargetId, BOOLEAN DefaultToZero);
     VOID BuildVideoSignalInfo(D3DKMDT_VIDEO_SIGNAL_INFO *pVideoSignalInfo, PVIDEO_MODE_INFORMATION pModeInfo);
+
+    // m_sourceLock is taken from PASSIVE/DISPATCH (mode set, FlipThread) and
+    // also from DIRQL: with FlipCaps.FlipOnVSyncMmIo set, dxgkrnl runs
+    // DdiSetVidPnSourceAddress inside dxgmms1!VidSchiExecuteMmIoFlipAtISR via
+    // KeSynchronizeExecution. KeAcquireSpinLock raises to DISPATCH_LEVEL and
+    // must not be called above it -- at DIRQL it hangs the CPU in
+    // nt!KeAcquireSpinLockRaiseToDpc. Go through these helpers so the caller's
+    // IRQL is honoured wherever the lock is taken.
+    __forceinline KIRQL AcquireSourceLock()
+    {
+        KIRQL irql = KeGetCurrentIrql();
+        if (irql >= DISPATCH_LEVEL)
+        {
+            KeAcquireSpinLockAtDpcLevel(&m_sourceLock);
+            return irql;
+        }
+        KeAcquireSpinLock(&m_sourceLock, &irql);
+        return irql;
+    }
+
+    __forceinline void ReleaseSourceLock(KIRQL irql)
+    {
+        if (irql >= DISPATCH_LEVEL)
+        {
+            KeReleaseSpinLockFromDpcLevel(&m_sourceLock);
+        }
+        else
+        {
+            KeReleaseSpinLock(&m_sourceLock, irql);
+        }
+    }
 
     VioGpuAdapter *m_pAdapter;
     DXGKRNL_INTERFACE *m_pDxgkInterface;

@@ -2068,15 +2068,14 @@ void VioGpuVidPN::Flip()
         VioGpuAllocation *res = NULL;
         PHYSICAL_ADDRESS address;
 
-        KIRQL oldIrql;
-        KeAcquireSpinLock(&m_sourceLock, &oldIrql);
+        KIRQL oldIrql = AcquireSourceLock();
         res = m_sourceRes;
         if (res)
         {
             res->AddRef();
         }
         address = m_sourceAddress;
-        KeReleaseSpinLock(&m_sourceLock, oldIrql);
+        ReleaseSourceLock(oldIrql);
 
         // Blob primaries (the blt-present standing dmabuf set via
         // SetScanoutSource) scan out by res_id through SetScanoutBlob and carry
@@ -2107,13 +2106,19 @@ void VioGpuVidPN::Flip()
     // fall back to the last SetVidPnSourceAddress value (MMIO flips,
     // boot primary) when the latch has no patched address yet.
     {
-        KIRQL vsyncIrql;
-        KeAcquireSpinLock(&m_sourceLock, &vsyncIrql);
+        KIRQL vsyncIrql = AcquireSourceLock();
+        // Report the latched flip address FIRST: for MMIO flips
+        // (FlipOnVSyncMmIo) m_sourceAddress is the PrimaryAddress of
+        // the pending flip and MUST be echoed verbatim for dxgkrnl to
+        // confirm it; the allocation's patched SegmentAddress is only
+        // a boot-primary fallback.
         interrupt.CrtcVsync.PhysicalAddress =
-            (m_sourceRes && m_sourceRes->m_SegmentAddress.QuadPart != 0)
-                ? m_sourceRes->m_SegmentAddress
-                : m_sourceAddress;
-        KeReleaseSpinLock(&m_sourceLock, vsyncIrql);
+            (m_sourceAddress.QuadPart != 0)
+                ? m_sourceAddress
+                : ((m_sourceRes && m_sourceRes->m_SegmentAddress.QuadPart != 0)
+                       ? m_sourceRes->m_SegmentAddress
+                       : m_sourceAddress);
+        ReleaseSourceLock(vsyncIrql);
     }
 
     m_pAdapter->NotifyInterrupt(&interrupt, true);
@@ -2172,12 +2177,11 @@ NTSTATUS VioGpuVidPN::SetVidPnSourceAddress(const DXGKARG_SETVIDPNSOURCEADDRESS 
         newRes->AddRef();
     }
 
-    KIRQL oldIrql;
-    KeAcquireSpinLock(&m_sourceLock, &oldIrql);
+    KIRQL oldIrql = AcquireSourceLock();
     VioGpuAllocation *oldRes = m_sourceRes;
     m_sourceAddress = pSetVidPnSourceAddress->PrimaryAddress;
     m_sourceRes = newRes;
-    KeReleaseSpinLock(&m_sourceLock, oldIrql);
+    ReleaseSourceLock(oldIrql);
 
     if (oldRes)
     {
@@ -2201,6 +2205,23 @@ NTSTATUS VioGpuVidPN::SetVidPnSourceAddress(const DXGKARG_SETVIDPNSOURCEADDRESS 
     return STATUS_SUCCESS;
 };
 
+void VioGpuVidPN::RearmFlipIfScanout(VioGpuAllocation *res)
+{
+    // GDI/basic present model: blts land in the shared primary that the
+    // scanout already points at (SetVidPnSourceAddress at modeset), so no
+    // present DDI re-arms the flip latch and the host framebuffer updates
+    // are never re-flushed -- the display freezes on the modeset frame.
+    // Re-arm the vsync flip when a blt destination IS the current scanout
+    // source so FlushToScreen re-emits SET_SCANOUT + RESOURCE_FLUSH.
+    KIRQL oldIrql = AcquireSourceLock();
+    BOOLEAN isScanout = (m_sourceRes == res);
+    ReleaseSourceLock(oldIrql);
+
+    if (isScanout)
+    {
+        InterlockedOr(&m_shouldFlip, 1);
+    }
+}
 void VioGpuVidPN::SetScanoutSource(VioGpuAllocation *res, PHYSICAL_ADDRESS addr)
 {
     // Only the full-screen desktop primary may become the scanout source.
@@ -2242,15 +2263,14 @@ void VioGpuVidPN::SetScanoutSource(VioGpuAllocation *res, PHYSICAL_ADDRESS addr)
         res->AddRef();
     }
 
-    KIRQL oldIrql;
-    KeAcquireSpinLock(&m_sourceLock, &oldIrql);
+    KIRQL oldIrql = AcquireSourceLock();
     VioGpuAllocation *oldRes = m_sourceRes;
     m_sourceRes = res;
     if (addr.QuadPart != 0)
     {
         m_sourceAddress = addr;
     }
-    KeReleaseSpinLock(&m_sourceLock, oldIrql);
+    ReleaseSourceLock(oldIrql);
 
     if (oldRes)
     {
