@@ -661,6 +661,9 @@ NTSTATUS VioGpuAdapter::QueryAdapterInfo(_In_ CONST DXGKARG_QUERYADAPTERINFO *pQ
     }
 }
 
+// Defined in the non-paged section below; runs at DISPATCH from the completion DPC.
+static void PresentFenceCb(void *ctx, void *unused1, void *unused2);
+
 NTSTATUS VioGpuAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
 {
     PAGED_CODE();
@@ -932,6 +935,45 @@ NTSTATUS VioGpuAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
                 pDevice->m_pBlit = pVioGpuEscape->BlitInit.pBlitPresent;
                 break;
             }
+        case VIOGPU_SUBMIT_PRESENT_FENCE:
+            {
+                size = sizeof(VIOGPU_PRESENT_FENCE_REQ);
+                if (pVioGpuEscape->DataLength < size)
+                {
+                    DbgPrint(TRACE_LEVEL_ERROR,
+                             ("%s buffer too small %d, should be at least %d\n",
+                              __FUNCTION__, pVioGpuEscape->DataLength, size));
+                    return STATUS_INVALID_BUFFER_SIZE;
+                }
+                VioGpuDevice *pDevice = VioGpuDevice::FromHandle(pEscape->hDevice);
+                if (pDevice == NULL)
+                {
+                    DbgPrint(TRACE_LEVEL_ERROR, ("%s no hDevice(context) supplied\n", __FUNCTION__));
+                    return STATUS_INVALID_PARAMETER;
+                }
+                // Reference the UMD event; PresentFenceCb releases it after signalling.
+                PKEVENT pEvent = NULL;
+                if (!NT_SUCCESS(ObReferenceObjectByHandle(pVioGpuEscape->PresentFence.EventUM,
+                                                          SYNCHRONIZE | EVENT_MODIFY_STATE,
+                                                          *ExEventObjectType,
+                                                          UserMode,
+                                                          (void **)&pEvent,
+                                                          NULL)))
+                {
+                    DbgPrint(TRACE_LEVEL_ERROR,
+                             ("---> %s: SUBMIT_PRESENT_FENCE bad event %p\n",
+                              __FUNCTION__, pVioGpuEscape->PresentFence.EventUM));
+                    return STATUS_INVALID_HANDLE;
+                }
+                // Empty fenced SUBMIT_3D on the event ring.  The host defers the
+                // used-ring response until the fence's D3DMetal proxy signals (real
+                // GPU completion), so PresentFenceCb -> KeSetEvent fires exactly when
+                // the frame finished rendering -- the async present-completion wake.
+                ctrlQueue.SubmitCommand(NULL, 0, pDevice->m_Context.GetId(), TRUE,
+                                        pVioGpuEscape->PresentFence.RingIdx,
+                                        PresentFenceCb, pEvent);
+                break;
+            }
         default:
             DbgPrint(TRACE_LEVEL_ERROR, ("%s: invalid Escape type 0x%x\n", __FUNCTION__, pVioGpuEscape->Type));
             status = STATUS_INVALID_PARAMETER;
@@ -976,6 +1018,17 @@ PAGED_CODE_SEG_END
 //
 #pragma code_seg(push)
 #pragma code_seg()
+
+// SUBMIT_PRESENT_FENCE completion: the host retired the event-ring fence (real GPU
+// completion), so wake the UMD's present thread.  Runs at DISPATCH from the response
+// DPC drain -- must be non-paged.  The UMD's own handle keeps the event referenced,
+// so ObDereferenceObject here never triggers deletion at raised IRQL.
+static void PresentFenceCb(void *ctx, void *, void *)
+{
+    PKEVENT pEvent = (PKEVENT)ctx;
+    KeSetEvent(pEvent, IO_NO_INCREMENT, FALSE);
+    ObDereferenceObject(pEvent);
+}
 
 VOID VioGpuAdapter::DpcRoutine(VOID)
 {

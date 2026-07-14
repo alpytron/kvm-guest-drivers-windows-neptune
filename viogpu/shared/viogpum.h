@@ -87,6 +87,13 @@ typedef struct _VIOGPU_ADAPTERINFO
 
 #define VIOGPU_BLIT_INIT             0x300
 
+// Submit an empty GPU-done fence on an event ring (>= NPT_EVENT_RING_BASE) and
+// signal EventUM from the completion DPC when the host retires it.  Because an
+// event-ring fence's used-ring response is deferred by the host until real GPU
+// completion, EventUM fires exactly when the frame's render finished on the GPU
+// -- the async present-completion wait the UMD blocks on before the flip.
+#define VIOGPU_SUBMIT_PRESENT_FENCE  0x400
+
 #pragma pack(1)
 typedef struct _VIOGPU_DISP_MODE
 {
@@ -172,6 +179,14 @@ typedef struct _VIOGPU_BLIT_INIT_REQ
 #pragma pack()
 
 #pragma pack(1)
+typedef struct _VIOGPU_PRESENT_FENCE_REQ
+{
+    HANDLE EventUM;   // UMD auto-reset event the KMD signals from the completion DPC
+    ULONG  RingIdx;   // event ring (>= NPT_EVENT_RING_BASE) to carry the fence
+} VIOGPU_PRESENT_FENCE_REQ;
+#pragma pack()
+
+#pragma pack(1)
 typedef struct _VIOGPU_ESCAPE
 {
     USHORT Type;
@@ -189,6 +204,8 @@ typedef struct _VIOGPU_ESCAPE
         VIOGPU_CTX_INIT_REQ CtxInit;
 
         VIOGPU_BLIT_INIT_REQ BlitInit;
+
+        VIOGPU_PRESENT_FENCE_REQ PresentFence;
     } DUMMYUNIONNAME;
 } VIOGPU_ESCAPE, *PVIOGPU_ESCAPE;
 #pragma pack()
