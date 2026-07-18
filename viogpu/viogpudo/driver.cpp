@@ -31,6 +31,7 @@
 #include "viogpudo.h"
 #include "helper.h"
 #include "baseobj.h"
+#include "viogpu_pnp_fixup.h"
 
 #if !DBG
 #include "driver.tmh"
@@ -160,6 +161,8 @@ VioGpuDodAddDevice(_In_ DEVICE_OBJECT *pPhysicalDeviceObject, _Outptr_ PVOID *pp
 
     *ppDeviceContext = pVioGpuDod;
 
+    VioGpuInstallDisplayFixup(pPhysicalDeviceObject);
+
     DbgPrint(TRACE_LEVEL_FATAL, ("<--- %s ppDeviceContext = %p\n", __FUNCTION__, pVioGpuDod));
     return STATUS_SUCCESS;
 }
@@ -174,6 +177,7 @@ VioGpuDodRemoveDevice(_In_ VOID *pDeviceContext)
 
     if (pVioGpuDod)
     {
+        VioGpuRemoveDisplayFixup(pVioGpuDod->GetPhysicalDevice());
         delete pVioGpuDod;
     }
 

@@ -32,6 +32,7 @@
 #include "baseobj.h"
 #include "viogpu_adapter.h"
 #include "viogpu_device.h"
+#include "viogpu_pnp_fixup.h"
 #if !DBG
 #include "driver.tmh"
 #endif
@@ -205,6 +206,8 @@ VioGpu3DAddDevice(_In_ DEVICE_OBJECT *pPhysicalDeviceObject, _Outptr_ PVOID *ppD
 
     *ppDeviceContext = pAdapter->ToHandle();
 
+    VioGpuInstallDisplayFixup(pPhysicalDeviceObject);
+
     DbgPrint(TRACE_LEVEL_FATAL, ("<--- %s ppDeviceContext = %p\n", __FUNCTION__, pAdapter));
     return STATUS_SUCCESS;
 }
@@ -219,6 +222,7 @@ VioGpu3DRemoveDevice(_In_ VOID *pDeviceContext)
 
     if (pAdapter)
     {
+        VioGpuRemoveDisplayFixup(pAdapter->GetPhysicalDevice());
         delete pAdapter;
     }
 

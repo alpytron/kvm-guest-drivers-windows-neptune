@@ -34,6 +34,9 @@
     <ClCompile Include="..\common\viogpu_pci.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\common\viogpu_pnp_fixup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\common\viogpu_queue.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -64,6 +67,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\common\helper.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\common\viogpu_pnp_fixup.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="driver.h">

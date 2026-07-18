@@ -239,6 +239,10 @@ class VioGpuDod
     {
         return m_Flags.HardwareInit;
     }
+    DEVICE_OBJECT *GetPhysicalDevice(void)
+    {
+        return m_pPhysicalDevice;
+    }
     void SetHardwareInit(BOOLEAN init)
     {
         m_Flags.HardwareInit = init;
