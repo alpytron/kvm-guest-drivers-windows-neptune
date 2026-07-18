@@ -493,6 +493,14 @@
   </ItemGroup>
   <ItemGroup>
     <FilesToPackage Include="$(TargetPath)" />
+    <FilesToPackage Include="..\viogpuap\$(OutDir)viogpuap.exe">
+      <PackageRelativeDirectory>
+      </PackageRelativeDirectory>
+    </FilesToPackage>
+    <FilesToPackage Include="..\viogpusc\$(OutDir)vgpusrv.exe">
+      <PackageRelativeDirectory>
+      </PackageRelativeDirectory>
+    </FilesToPackage>
   </ItemGroup>
   <ItemGroup>
     <Inf Include="viogpu3d.inx" />

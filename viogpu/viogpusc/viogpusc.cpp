@@ -55,11 +55,7 @@ int _cdecl wmain(__in ULONG argc, __in_ecount(argc) PWCHAR argv[])
 {
     if (argc == 2)
     {
-        if (_wcsicmp(L"-i", argv[1]) == 0)
-        {
-            InstallService();
-        }
-        else if (_wcsicmp(L"-u", argv[1]) == 0)
+        if (_wcsicmp(L"-u", argv[1]) == 0)
         {
             UninstallService();
         }

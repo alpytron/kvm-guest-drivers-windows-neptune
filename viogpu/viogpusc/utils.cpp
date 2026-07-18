@@ -36,72 +36,11 @@ void ShowUsage()
 {
     wprintf(L"\n");
     wprintf(L"USAGE:\n");
-    wprintf(L"vgpusvr -i\tInstall service\n");
     wprintf(L"vgpusvr -u\tUninstall service\n");
     wprintf(L"vgpusvr -r\tRun service\n");
     wprintf(L"vgpusvr -s\tStop service\n");
     wprintf(L"vgpusvr status\tCurrent status\n");
     wprintf(L"\n");
-}
-
-BOOL InstallService()
-{
-    SC_HANDLE newService;
-    SC_HANDLE scm;
-    TCHAR szBuffer[255];
-    TCHAR szPath[MAX_PATH];
-
-    GetModuleFileName(GetModuleHandle(NULL), szPath, MAX_PATH);
-    PrintMessage(L"Nodule Name %ws\n", szPath);
-    if (FAILED(StringCchCopy(szBuffer, 255, TEXT("\""))))
-    {
-        PrintMessage(L"szBuffer %ws\n", szBuffer);
-        return FALSE;
-    }
-    if (FAILED(StringCchCat(szBuffer, 255, szPath)))
-    {
-        PrintMessage(L"szBuffer %ws\n", szBuffer);
-        return FALSE;
-    }
-    if (FAILED(StringCchCat(szBuffer, 255, TEXT("\""))))
-    {
-        PrintMessage(L"szBuffer %ws\n", szBuffer);
-        return FALSE;
-    }
-
-    scm = OpenSCManager(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
-    if (scm == NULL)
-    {
-        ErrorHandler("OpenSCManager", GetLastError());
-    }
-    newService = CreateService(scm,
-                               ServiceName,
-                               DisplayName,
-                               SERVICE_ALL_ACCESS,
-                               SERVICE_WIN32_OWN_PROCESS,
-                               SERVICE_AUTO_START,
-                               SERVICE_ERROR_NORMAL,
-                               szBuffer,
-                               NULL,
-                               NULL,
-                               NULL,
-                               NULL,
-                               NULL);
-    if (!newService)
-    {
-        ErrorHandler("CreateService", GetLastError());
-        return FALSE;
-    }
-    else
-    {
-        printf("Service Installed\n");
-        ServiceRun();
-    }
-
-    CloseServiceHandle(newService);
-    CloseServiceHandle(scm);
-
-    return TRUE;
 }
 
 BOOL UninstallService()
