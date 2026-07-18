@@ -496,6 +496,11 @@
     <Inf Include="viogpu3d.inx" />
   </ItemGroup>
   <!--  <ItemGroup Condition="'$(BUILD_RESOLUTIONS_USERMODE)'!=''"> -->
+  <PropertyGroup Condition="Exists('$(MESA_PREFIX)\bin\neptune_umd.dll')">
+    <UseNeptuneArm64x Condition="'$(Platform)'=='ARM64' AND '$(MESA_ARM64X_PREFIX)'!='' AND Exists('$(MESA_ARM64X_PREFIX)\neptune_umd_ec.dll')">true</UseNeptuneArm64x>
+    <NeptuneUmdSource Condition="'$(UseNeptuneArm64x)'=='true'">$(MESA_ARM64X_PREFIX)\neptune_umd.dll</NeptuneUmdSource>
+    <NeptuneUmdSource Condition="'$(UseNeptuneArm64x)'!='true'">$(MESA_PREFIX)\bin\neptune_umd.dll</NeptuneUmdSource>
+  </PropertyGroup>
   <ItemGroup Condition="Exists('$(MESA_PREFIX)\bin\vulkan_virtio.dll')">
     <FilesToPackage Include="$(ProjectDir)icd\virtio_icd.json">
       <PackageRelativeDirectory>
@@ -505,7 +510,17 @@
       <PackageRelativeDirectory>
       </PackageRelativeDirectory>
     </FilesToPackage>
-    <FilesToPackage Include="$(MESA_PREFIX)\bin\neptune_umd.dll">
+    <FilesToPackage Include="$(NeptuneUmdSource)">
+      <PackageRelativeDirectory>
+      </PackageRelativeDirectory>
+    </FilesToPackage>
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseNeptuneArm64x)'=='true'">
+    <FilesToPackage Include="$(MESA_ARM64X_PREFIX)\neptune_umd_arm64.dll">
+      <PackageRelativeDirectory>
+      </PackageRelativeDirectory>
+    </FilesToPackage>
+    <FilesToPackage Include="$(MESA_ARM64X_PREFIX)\neptune_umd_ec.dll">
       <PackageRelativeDirectory>
       </PackageRelativeDirectory>
     </FilesToPackage>
@@ -517,7 +532,41 @@
     <PackOne_Files Include="..\viogpusc\$(OutDir)vgpusrv.pdb" />
     <PackOne_Files Include="$(ProjectDir)icd\virtio_icd.json" />
     <PackOne_Files Include="$(MESA_PREFIX)\bin\vulkan_virtio.dll" />
-    <PackOne_Files Include="$(MESA_PREFIX)\bin\neptune_umd.dll" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('$(NeptuneUmdSource)')">
+    <PackOne_Files Include="$(NeptuneUmdSource)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseNeptuneArm64x)'=='true'">
+    <PackOne_Files Include="$(MESA_ARM64X_PREFIX)\neptune_umd_arm64.dll" />
+    <PackOne_Files Include="$(MESA_ARM64X_PREFIX)\neptune_umd_ec.dll" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseNeptuneArm64x)'=='true'">
+    <Substitution Include="INX_ARM64X_NATIVE_SRCDISK">
+      <ReplaceWith>neptune_umd_arm64.dll = 1,,</ReplaceWith>
+    </Substitution>
+    <Substitution Include="INX_ARM64X_EC_SRCDISK">
+      <ReplaceWith>neptune_umd_ec.dll = 1,,</ReplaceWith>
+    </Substitution>
+    <Substitution Include="INX_ARM64X_NATIVE_COPY">
+      <ReplaceWith>neptune_umd_arm64.dll,,,0</ReplaceWith>
+    </Substitution>
+    <Substitution Include="INX_ARM64X_EC_COPY">
+      <ReplaceWith>neptune_umd_ec.dll,,,0</ReplaceWith>
+    </Substitution>
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseNeptuneArm64x)'!='true'">
+    <Substitution Include="INX_ARM64X_NATIVE_SRCDISK">
+      <ReplaceWith></ReplaceWith>
+    </Substitution>
+    <Substitution Include="INX_ARM64X_EC_SRCDISK">
+      <ReplaceWith></ReplaceWith>
+    </Substitution>
+    <Substitution Include="INX_ARM64X_NATIVE_COPY">
+      <ReplaceWith></ReplaceWith>
+    </Substitution>
+    <Substitution Include="INX_ARM64X_EC_COPY">
+      <ReplaceWith></ReplaceWith>
+    </Substitution>
   </ItemGroup>
   <Target Name="UpdateVulkanIcdJsons" BeforeTargets="PrepareForBuild" Condition="'$(MESA_PREFIX)' != '' AND Exists('$(ProjectDir)tools\update_icd_jsons.ps1')">
     <Message Text="Updating Vulkan ICD JSONs from $(MESA_PREFIX)" Importance="High" />
