@@ -35,6 +35,7 @@ vgpusrv.exe = 1,,
 viogpuap.exe = 1,,
 INX_ARM64X_NATIVE_SRCDISK
 INX_ARM64X_EC_SRCDISK
+INX_WOW_SRCDISK
 
 [Manufacturer]
 %RHEL%=RHEL,NT$ARCH$
@@ -55,6 +56,7 @@ vgpusrv.exe,,,0
 viogpuap.exe,,,0
 INX_ARM64X_NATIVE_COPY
 INX_ARM64X_EC_COPY
+INX_WOW_COPY
 
 [VioGpu3D_Inst]
 Include=msdv.inf
@@ -98,6 +100,7 @@ HKR,, HWCursor,                    %REG_DWORD%, 0
 HKR,, FlexResolution,              %REG_DWORD%, 1
 HKR,, UsePhysicalMemory,           %REG_DWORD%, 0
 HKR,, UserModeDriverName,          %REG_MULTI_SZ%, %13%\neptune_umd.dll,%13%\neptune_umd.dll,%13%\neptune_umd.dll,%13%\neptune_umd.dll
+INX_WOW_UMDNAME
 HKR,, VulkanDriverName,            %REG_SZ%,       %13%\virtio_icd.json
 
 HKLM,"SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Scheduler",EnablePreemption,%REG_DWORD%,0

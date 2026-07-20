@@ -124,7 +124,8 @@ contains `viogpu3d.sys`, `viogpu3d.inf`, `viogpu3d.cat`, and — when `MESA_PREF
 was set — `neptune_umd.dll`, `vulkan_virtio.dll`, and `virtio_icd.json`. An ARM64
 build additionally packages the two ARM64X view DLLs
 (`neptune_umd_arm64.dll`, `neptune_umd_ec.dll`) when `MESA_ARM64X_PREFIX` is set;
-see *ARM64X* below.
+see *ARM64X* below. Any 64-bit build additionally packages
+`neptune_umd_x86.dll` when `MESA_X86_PREFIX` is set; see *WOW64* below.
 
 The package is test-signed during the build. If you sign manually, sign the
 `.sys` and `.cat` with `build\VirtIOTestCert.pfx` (`signtool sign /fd SHA256`).
@@ -213,6 +214,43 @@ build (step 1):
 The result is a single driver whose UMD loads for both native-arm64 and
 x64-emulated Direct3D applications.
 
+## WOW64 (32-bit applications on a 64-bit guest)
+
+32-bit x86 Direct3D applications run as WOW64 processes on both x64 and ARM64
+Windows, and a WOW64 process can only load a 32-bit PE32 DLL. ARM64X does not
+help here: an ARM64X image is PE32+ and its two views are arm64 and
+arm64ec/x64 — there is no 32-bit view. So supporting 32-bit apps needs a
+genuinely separate **x86** build of the UMD, pointed at by the adapter's
+`UserModeDriverNameWow` registry value.
+
+Build the x86 UMD exactly as in step 1, from an `x86` developer prompt, into
+its own prefix. Venus is not currently built for x86, so only
+`neptune_umd.dll` is needed.
+
+Then point `MESA_X86_PREFIX` at that prefix — the directory whose `bin`
+subdirectory holds the x86 `neptune_umd.dll`:
+
+```
+set MESA_PREFIX=<PREFIX>
+set MESA_X86_PREFIX=<PREFIX-X86>
+..\build\build.bat viogpu.sln Win11 x64
+```
+
+The build stages `%MESA_X86_PREFIX%\bin\neptune_umd.dll` under the name
+**`neptune_umd_x86.dll`**, adds it to the package and the catalog, and injects
+its `SourceDisksFiles`/`CopyFiles` entries plus a `UserModeDriverNameWow` line
+into the INF. The rename is necessary because the 32- and 64-bit UMDs share one
+DriverStore directory (dirid 13 has no WoW64 file-system redirection) and dirid
+13 forbids renaming in `CopyFiles`, so it has to happen at build time.
+
+`MESA_X86_PREFIX` is independent of `MESA_ARM64X_PREFIX` and composes with it:
+an ARM64 build with both set ships the ARM64X three-file set *and* the x86 UMD,
+covering native-arm64, x64-emulated, and x86-emulated applications. If
+`MESA_X86_PREFIX` is unset (or `%MESA_X86_PREFIX%\bin\neptune_umd.dll` is
+missing) nothing WOW-related is packaged and the INF is byte-identical to
+before. It is ignored for `x86` targets, where the same binary would be the
+native UMD rather than the WOW one.
+
 ## Installing
 
 On the guest, trust the test certificate in **both** the machine `Root` and
@@ -233,6 +271,9 @@ The KMD loads without a reboot. A healthy install shows the *Red Hat VirtIO GPU
   UMD (step 1) first, then set `MESA_PREFIX`.
 - **x64-emulated app fails to load the UMD on ARM64** (e.g. `ERROR_BAD_EXE_FORMAT`)
   — the UMD is native-arm64 only; build the ARM64X image as above.
+- **32-bit app falls back to WARP or fails device creation on an x64/ARM64
+  guest** — no `UserModeDriverNameWow` was written because `MESA_X86_PREFIX` was
+  unset; build the x86 UMD and set it, as in *WOW64* above.
 - **`pnputil` reports the certificate chain is not trusted** — the test
   certificate must be present in both the `Root` and `TrustedPublisher` machine
   stores.

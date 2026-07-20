@@ -510,6 +510,16 @@
     <UseNeptuneArm64x Condition="'$(Platform)'=='ARM64' AND '$(MESA_ARM64X_PREFIX)'!='' AND Exists('$(MESA_ARM64X_PREFIX)\neptune_umd_ec.dll')">true</UseNeptuneArm64x>
     <NeptuneUmdSource Condition="'$(UseNeptuneArm64x)'=='true'">$(MESA_ARM64X_PREFIX)\neptune_umd.dll</NeptuneUmdSource>
     <NeptuneUmdSource Condition="'$(UseNeptuneArm64x)'!='true'">$(MESA_PREFIX)\bin\neptune_umd.dll</NeptuneUmdSource>
+    <!-- 32-bit (WOW64) user-mode driver, for x86 D3D apps on an x64 or ARM64
+         guest. An ARM64X image is PE32+ and has no 32-bit view, so this is a
+         separate x86 build. Pointless on a 32-bit KMD, where it would be the
+         native UMD rather than the WOW one. -->
+    <UseNeptuneWow Condition="'$(Platform)'!='Win32' AND '$(MESA_X86_PREFIX)'!='' AND Exists('$(MESA_X86_PREFIX)\bin\neptune_umd.dll')">true</UseNeptuneWow>
+    <NeptuneWowUmdSource>$(MESA_X86_PREFIX)\bin\neptune_umd.dll</NeptuneWowUmdSource>
+    <!-- Staged under a distinct name: it shares the DriverStore directory with
+         the 64-bit UMD (dirid 13 has no WoW64 redirection) and dirid 13 forbids
+         renaming in CopyFiles, so the rename has to happen at build time. -->
+    <NeptuneWowUmd>$(IntDir)neptune_umd_x86.dll</NeptuneWowUmd>
   </PropertyGroup>
   <ItemGroup Condition="Exists('$(MESA_PREFIX)\bin\vulkan_virtio.dll')">
     <FilesToPackage Include="$(ProjectDir)icd\virtio_icd.json">
@@ -535,6 +545,12 @@
       </PackageRelativeDirectory>
     </FilesToPackage>
   </ItemGroup>
+  <ItemGroup Condition="'$(UseNeptuneWow)'=='true'">
+    <FilesToPackage Include="$(NeptuneWowUmd)">
+      <PackageRelativeDirectory>
+      </PackageRelativeDirectory>
+    </FilesToPackage>
+  </ItemGroup>
   <ItemGroup Condition="Exists('$(MESA_PREFIX)\bin\vulkan_virtio.dll')">
     <PackOne_Files Include="..\viogpuap\$(OutDir)viogpuap.exe" />
     <PackOne_Files Include="..\viogpuap\$(OutDir)viogpuap.pdb" />
@@ -550,6 +566,9 @@
     <PackOne_Files Include="$(MESA_ARM64X_PREFIX)\neptune_umd_arm64.dll" />
     <PackOne_Files Include="$(MESA_ARM64X_PREFIX)\neptune_umd_ec.dll" />
   </ItemGroup>
+  <ItemGroup Condition="'$(UseNeptuneWow)'=='true'">
+    <PackOne_Files Include="$(NeptuneWowUmd)" />
+  </ItemGroup>
   <ItemGroup Condition="'$(UseNeptuneArm64x)'=='true'">
     <Substitution Include="INX_ARM64X_NATIVE_SRCDISK">
       <ReplaceWith>neptune_umd_arm64.dll = 1,,</ReplaceWith>
@@ -562,6 +581,30 @@
     </Substitution>
     <Substitution Include="INX_ARM64X_EC_COPY">
       <ReplaceWith>neptune_umd_ec.dll,,,0</ReplaceWith>
+    </Substitution>
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseNeptuneWow)'=='true'">
+    <Substitution Include="INX_WOW_SRCDISK">
+      <ReplaceWith>neptune_umd_x86.dll = 1,,</ReplaceWith>
+    </Substitution>
+    <Substitution Include="INX_WOW_COPY">
+      <ReplaceWith>neptune_umd_x86.dll,,,0</ReplaceWith>
+    </Substitution>
+    <!-- %25 is an escaped '%': MSBuild would otherwise read %13 as a hex
+         character escape and eat the dirid. -->
+    <Substitution Include="INX_WOW_UMDNAME">
+      <ReplaceWith>HKR,, UserModeDriverNameWow,       %25REG_MULTI_SZ%25, %2513%25\neptune_umd_x86.dll,%2513%25\neptune_umd_x86.dll,%2513%25\neptune_umd_x86.dll,%2513%25\neptune_umd_x86.dll</ReplaceWith>
+    </Substitution>
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseNeptuneWow)'!='true'">
+    <Substitution Include="INX_WOW_SRCDISK">
+      <ReplaceWith></ReplaceWith>
+    </Substitution>
+    <Substitution Include="INX_WOW_COPY">
+      <ReplaceWith></ReplaceWith>
+    </Substitution>
+    <Substitution Include="INX_WOW_UMDNAME">
+      <ReplaceWith></ReplaceWith>
     </Substitution>
   </ItemGroup>
   <ItemGroup Condition="'$(UseNeptuneArm64x)'!='true'">
@@ -578,6 +621,10 @@
       <ReplaceWith></ReplaceWith>
     </Substitution>
   </ItemGroup>
+  <Target Name="StageNeptuneWowUmd" BeforeTargets="PrepareForBuild" Condition="'$(UseNeptuneWow)'=='true'" Inputs="$(NeptuneWowUmdSource)" Outputs="$(NeptuneWowUmd)">
+    <Message Text="Staging WOW64 user-mode driver $(NeptuneWowUmdSource) as $(NeptuneWowUmd)" Importance="High" />
+    <Copy SourceFiles="$(NeptuneWowUmdSource)" DestinationFiles="$(NeptuneWowUmd)" SkipUnchangedFiles="true" />
+  </Target>
   <Target Name="UpdateVulkanIcdJsons" BeforeTargets="PrepareForBuild" Condition="'$(MESA_PREFIX)' != '' AND Exists('$(ProjectDir)tools\update_icd_jsons.ps1')">
     <Message Text="Updating Vulkan ICD JSONs from $(MESA_PREFIX)" Importance="High" />
     <Exec Command="%25SystemRoot%25\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)tools\update_icd_jsons.ps1&quot; -MesaPrefix &quot;$(MESA_PREFIX)&quot;" />
