@@ -770,7 +770,7 @@ NTSTATUS VioGpuAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
                 {
                     UCHAR *buf = ((PGPU_RESP_CAPSET)vbuf->resp_buf)->capset_data;
                     ULONG to_copy = min(pVioGpuEscape->Capset.Size, pCapsetInfo->max_size);
-                    UCHAR *userCapset = pVioGpuEscape->Capset.Capset;
+                    UCHAR *userCapset = VIOGPU_UM_PTR_AS(UCHAR *, pVioGpuEscape->Capset.Capset);
                     ProbeForWrite(userCapset, to_copy, sizeof(UCHAR));
                     memcpy(userCapset, buf, to_copy);
                 }
@@ -909,18 +909,18 @@ NTSTATUS VioGpuAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                if (!NT_SUCCESS(ObReferenceObjectByHandle(pVioGpuEscape->BlitInit.EventUM,
+                if (!NT_SUCCESS(ObReferenceObjectByHandle(VioGpuUmHandleValue(pVioGpuEscape->BlitInit.EventUM),
                                                           SYNCHRONIZE | EVENT_MODIFY_STATE,
                                                           *ExEventObjectType,
                                                           UserMode,
                                                           (void **)&pDevice->m_hUM,
                                                           NULL)))
                 {
-                    DbgPrint(TRACE_LEVEL_ERROR, ("---> %s: Unable to reference user-mode event object %p\n", __FUNCTION__, pVioGpuEscape->BlitInit.EventUM));
+                    DbgPrint(TRACE_LEVEL_ERROR, ("---> %s: Unable to reference user-mode event object 0x%llx\n", __FUNCTION__, pVioGpuEscape->BlitInit.EventUM));
                     return STATUS_INVALID_HANDLE;
                 }
 
-                if (!NT_SUCCESS(ObReferenceObjectByHandle(pVioGpuEscape->BlitInit.EventKM,
+                if (!NT_SUCCESS(ObReferenceObjectByHandle(VioGpuUmHandleValue(pVioGpuEscape->BlitInit.EventKM),
                                                           SYNCHRONIZE | EVENT_MODIFY_STATE,
                                                           *ExEventObjectType,
                                                           UserMode,
@@ -928,11 +928,11 @@ NTSTATUS VioGpuAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
                                                           NULL)))
                 {
                     ObDereferenceObject(pDevice->m_hUM);
-                    DbgPrint(TRACE_LEVEL_ERROR, ("---> %s: Unable to reference user-mode event object %p\n", __FUNCTION__, pVioGpuEscape->BlitInit.EventKM));
+                    DbgPrint(TRACE_LEVEL_ERROR, ("---> %s: Unable to reference user-mode event object 0x%llx\n", __FUNCTION__, pVioGpuEscape->BlitInit.EventKM));
                     return STATUS_INVALID_HANDLE;
                 }
 
-                pDevice->m_pBlit = pVioGpuEscape->BlitInit.pBlitPresent;
+                pDevice->m_pBlit = VIOGPU_UM_PTR_AS(PVIOGPU_BLIT_PRESENT, pVioGpuEscape->BlitInit.pBlitPresent);
                 break;
             }
         case VIOGPU_SUBMIT_PRESENT_FENCE:
@@ -953,7 +953,7 @@ NTSTATUS VioGpuAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
                 }
                 // Reference the UMD event; PresentFenceCb releases it after signalling.
                 PKEVENT pEvent = NULL;
-                if (!NT_SUCCESS(ObReferenceObjectByHandle(pVioGpuEscape->PresentFence.EventUM,
+                if (!NT_SUCCESS(ObReferenceObjectByHandle(VioGpuUmHandleValue(pVioGpuEscape->PresentFence.EventUM),
                                                           SYNCHRONIZE | EVENT_MODIFY_STATE,
                                                           *ExEventObjectType,
                                                           UserMode,
@@ -961,7 +961,7 @@ NTSTATUS VioGpuAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
                                                           NULL)))
                 {
                     DbgPrint(TRACE_LEVEL_ERROR,
-                             ("---> %s: SUBMIT_PRESENT_FENCE bad event %p\n",
+                             ("---> %s: SUBMIT_PRESENT_FENCE bad event 0x%llx\n",
                               __FUNCTION__, pVioGpuEscape->PresentFence.EventUM));
                     return STATUS_INVALID_HANDLE;
                 }
