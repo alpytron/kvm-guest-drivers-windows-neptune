@@ -454,7 +454,9 @@ void VioGpuAllocation::AttachBacking(MDL *pMDL, size_t pageCount, size_t pageOff
 
     for (UINT i = 0; i < pageCount; i++)
     {
-        ents[i].addr = MmGetMdlPfnArray(pMDL)[pageOffset + i] * PAGE_SIZE;
+        // PFN_NUMBER is 32-bit on i386, so widen before shifting -- otherwise
+        // any page above the 4GiB line wraps and we hand the host a bogus PA.
+        ents[i].addr = (ULONGLONG)MmGetMdlPfnArray(pMDL)[pageOffset + i] << PAGE_SHIFT;
         ents[i].length = PAGE_SIZE;
         ents[i].padding = 0;
     }

@@ -297,8 +297,19 @@ PVOID CPciBar::GetVA(PDXGKRNL_INTERFACE pDxgkInterface)
         // DxgkCbMapMemory takes a ULONG length, so the BAR size cannot
         // exceed MAXULONG bytes here. The storage is ULONGLONG to admit
         // future > 4GiB BARs (mapped via chunking), but as long as we
-        // pass the size through this API the bound must hold.
-        ASSERT(m_uSize <= MAXULONG);
+        // pass the size through this API the bound must hold.  Fail the
+        // map rather than truncating: ASSERT is a no-op in free builds,
+        // and a silently wrapped length maps the wrong window.
+        if (m_uSize > MAXULONG)
+        {
+            DbgPrint(TRACE_LEVEL_ERROR,
+                     ("[%s] BAR at %I64x is %I64u bytes, exceeds the %u-byte DxgkCbMapMemory limit\n",
+                      __FUNCTION__,
+                      m_BasePA.QuadPart,
+                      m_uSize,
+                      MAXULONG));
+            return nullptr;
+        }
         if (m_bPortSpace)
         {
             if (m_bIoMapped)

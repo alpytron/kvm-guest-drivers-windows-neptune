@@ -628,8 +628,10 @@ NTSTATUS VioGpuAdapter::QueryAdapterInfo(_In_ CONST DXGKARG_QUERYADAPTERINFO *pQ
                     // Fill out aperture segment descriptor
                     //
                     pSegmentDesc[0].BaseAddress.QuadPart = 0xC0000000;
-                    pSegmentDesc[0].Size = 256 * 1024 * 4096;
-                    pSegmentDesc[0].CommitLimit = 256 * 1024 * 4096;
+                    // (SIZE_T) so the product is not evaluated in int -- 1GiB
+                    // fits today, but doubling the constant would overflow.
+                    pSegmentDesc[0].Size = (SIZE_T)256 * 1024 * 4096;
+                    pSegmentDesc[0].CommitLimit = (SIZE_T)256 * 1024 * 4096;
                     // pSegmentDesc[0].CpuTranslatedAddress.QuadPart = 0xFFFFFFFE00000000;
                     pSegmentDesc[0].Flags.Aperture = TRUE;
                     pSegmentDesc[0].Flags.CacheCoherent = TRUE;
@@ -1771,7 +1773,11 @@ NTSTATUS VioGpuAdapter::HWInit(PCM_RESOURCE_LIST pResList)
 
     // FIXME: bar 0 is not required to be present
     PHYSICAL_ADDRESS fb_pa = m_PciResources.GetPciBar(0)->GetPA();
-    UINT fb_size = (UINT) m_PciResources.GetPciBar(0)->GetSize();
+    // The framebuffer segment is described with 32-bit sizes; clamp instead of
+    // letting the cast wrap (a >= 4GiB BAR 0 would truncate to 0 and trip the
+    // ASSERT(size) in frameSegment.Init).
+    ULONGLONG fb_bar_size = m_PciResources.GetPciBar(0)->GetSize();
+    UINT fb_size = (fb_bar_size > MAXULONG) ? MAXULONG : (UINT)fb_bar_size;
     /*if (fb_pa.QuadPart == 0 && fb_size == 0) {
         DbgPrint(TRACE_LEVEL_WARNING, ("%s bar 0 is empty, trying 2\n", __FUNCTION__));
         fb_pa = m_PciResources.GetPciBar(2)->GetPA();
