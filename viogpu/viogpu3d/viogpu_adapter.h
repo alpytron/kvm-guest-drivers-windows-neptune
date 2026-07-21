@@ -229,7 +229,147 @@ class VioGpuAdapter final : public HandleBase<"VIOGADAP"_M, VioGpuAdapter>, IVio
 
     volatile LONG m_LastCompletedFenceId;
     volatile LONG m_LastSubmittedFenceId;
+
+    // ---- present-fence tokens (render -> flip ordering) ------------------
+    //
+    // Each VIOGPU_SUBMIT_PRESENT_FENCE escape gets a monotonic token.  The
+    // host defers that fence's used-ring response until the frame's real GPU
+    // completion, so the token retiring means "everything submitted before
+    // the escape has finished on the host GPU".  VioGpuVidPN holds a flip
+    // until the token its contents depend on has retired.  See
+    // viogpu_vidpn.h.
+    //
+    // The association is per THREAD: the UMD arms the fence
+    // (VIOGPU_SUBMIT_PRESENT_FENCE) and then calls pfnPresentCb on the SAME
+    // thread, and DxgkDdiPresent runs synchronously in that thread -- so the
+    // escape stamps its token under the current thread id and the flip
+    // consumes its own thread's stamp.  Exact pairing, cross-process safe,
+    // and a flip whose fence had already completed (the UMD arms only when
+    // GetCompletedValue < v) finds no stamp and correctly runs un-gated.
+    //
+    // It must NOT be the peeked newest token: a pipelined app latches flip
+    // N+1 (with a newer, unretired token) before token N retires, so a
+    // newest-token dependency is unretired at EVERY promote check and each
+    // new latch also resets the fallback deadline -- the scanout livelocks
+    // parked and the display freezes while rendering continues at full
+    // speed.
+    // And it can NOT be keyed on the device: the escape arrives on the npt
+    // transport's private D3DKMT device while the flip arrives on the
+    // runtime's device, so a per-device stamp is never read back.
+    //
+    // Completions arrive in submission order, but PresentTokenRetire() takes
+    // a maximum anyway so a reordering cannot make a retired token go
+    // backwards and strand a flip.
+    ULONGLONG PresentTokenSubmit(void)
+    {
+        return (ULONGLONG)InterlockedIncrement64(&m_PresentTokenNext);
+    }
+
+    // ---- per-thread arm->flip pairing (see the block comment above) ------
+    //
+    // Small open-addressed table keyed on the arming thread id.  Linear
+    // probe of 4; on a full neighbourhood the home slot is overwritten --
+    // the cost of a lost stamp is one un-gated flip (a possible transient
+    // tear), never a stall.  Take() always clears the slot, so a stamp that
+    // never met a flip (windowed presents whose frames go to DWM instead)
+    // is displaced by the thread's next arm rather than accumulating.
+#define VIOGPU_THREAD_TOKEN_SLOTS 64
+#define VIOGPU_THREAD_TOKEN_PROBE 4
+    struct THREAD_TOKEN_SLOT
+    {
+        HANDLE Tid;
+        ULONGLONG Token;
+    };
+
+    void StampThreadToken(HANDLE tid, ULONGLONG token)
+    {
+        ULONG home = VioGpuThreadTokenHash(tid);
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&m_ThreadTokenLock, &oldIrql);
+        ULONG victim = home;
+        for (ULONG i = 0; i < VIOGPU_THREAD_TOKEN_PROBE; i++)
+        {
+            ULONG idx = (home + i) & (VIOGPU_THREAD_TOKEN_SLOTS - 1);
+            if (m_ThreadTokens[idx].Tid == tid || m_ThreadTokens[idx].Tid == NULL)
+            {
+                victim = idx;
+                break;
+            }
+        }
+        m_ThreadTokens[victim].Tid = tid;
+        m_ThreadTokens[victim].Token = token;
+        KeReleaseSpinLock(&m_ThreadTokenLock, oldIrql);
+    }
+
+    ULONGLONG TakeThreadToken(HANDLE tid)
+    {
+        ULONG home = VioGpuThreadTokenHash(tid);
+        ULONGLONG token = 0;
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&m_ThreadTokenLock, &oldIrql);
+        for (ULONG i = 0; i < VIOGPU_THREAD_TOKEN_PROBE; i++)
+        {
+            ULONG idx = (home + i) & (VIOGPU_THREAD_TOKEN_SLOTS - 1);
+            if (m_ThreadTokens[idx].Tid == tid)
+            {
+                token = m_ThreadTokens[idx].Token;
+                m_ThreadTokens[idx].Tid = NULL;
+                m_ThreadTokens[idx].Token = 0;
+                break;
+            }
+        }
+        KeReleaseSpinLock(&m_ThreadTokenLock, oldIrql);
+        return token;
+    }
+
+    ULONGLONG PresentTokenDone(void)
+    {
+        return (ULONGLONG)InterlockedCompareExchange64(&m_PresentTokenDone, 0, 0);
+    }
+
+    void PresentTokenRetire(ULONGLONG token)
+    {
+        for (;;)
+        {
+            LONG64 cur = InterlockedCompareExchange64(&m_PresentTokenDone, 0, 0);
+            if ((LONG64)token <= cur ||
+                InterlockedCompareExchange64(&m_PresentTokenDone, (LONG64)token, cur) == cur)
+            {
+                break;
+            }
+        }
+    }
+
+    // Per-present completion context.  Preallocated and indexed by token so
+    // the present path never allocates from pool.  NOTE: this ring wraps
+    // onto a live entry once more than VIOGPU_PRESENT_FENCE_CTX_COUNT arms
+    // are in flight (fence-event arms are per
+    // ID3D11Fence::SetEventOnCompletion, adapter-wide, so the in-flight
+    // count is unbounded); the follow-up commit replaces it with a
+    // lookaside list.
+    struct PRESENT_FENCE_CTX
+    {
+        VioGpuAdapter *pAdapter;
+        ULONGLONG Token;
+        PKEVENT pEvent; // optional user-mode wake; NULL for kernel-gated flips
+    };
+#define VIOGPU_PRESENT_FENCE_CTX_COUNT 256
+    PRESENT_FENCE_CTX m_PresentFenceCtx[VIOGPU_PRESENT_FENCE_CTX_COUNT] = {};
+
   private:
+    static ULONG VioGpuThreadTokenHash(HANDLE tid)
+    {
+        // Thread ids are multiples of 4; fold the useful bits.
+        ULONG_PTR v = (ULONG_PTR)tid >> 2;
+        return (ULONG)(v ^ (v >> 6)) & (VIOGPU_THREAD_TOKEN_SLOTS - 1);
+    }
+
+    THREAD_TOKEN_SLOT m_ThreadTokens[VIOGPU_THREAD_TOKEN_SLOTS] = {};
+    KSPIN_LOCK m_ThreadTokenLock;
+
+    volatile LONG64 m_PresentTokenNext = 0;
+    volatile LONG64 m_PresentTokenDone = 0;
+
     BOOLEAN CheckHardware();
     NTSTATUS WriteRegistryString(_In_ HANDLE DevInstRegKeyHandle, _In_ PCWSTR pszwValueName, _In_ PCSTR pszValue);
     NTSTATUS WriteRegistryDWORD(_In_ HANDLE DevInstRegKeyHandle, _In_ PCWSTR pszwValueName, _In_ PDWORD pdwValue);
