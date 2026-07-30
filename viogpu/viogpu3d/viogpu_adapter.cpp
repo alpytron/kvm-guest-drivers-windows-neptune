@@ -2088,11 +2088,8 @@ NTSTATUS VioGpuAdapter::HWInit(PCM_RESOURCE_LIST pResList)
     UINT fb_size = (UINT)m_PciResources.GetPciBar(0)->GetSize();
 
     // FIXME
-#if NTDDI_VERSION > NTDDI_WINBLUE
-    UINT req_size = 0x1000000;
-#else
-    UINT req_size = 0x800000;
-#endif
+    // 4K framebuffer (3840x2160x4 = 31.6MB) must fit the segment.
+    UINT req_size = 0x4000000;
 
     if (!IsUsePhysicalMemory() || fb_pa.QuadPart == 0 || fb_size < req_size)
     {
