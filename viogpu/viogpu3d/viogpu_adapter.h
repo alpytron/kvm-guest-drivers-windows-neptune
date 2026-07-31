@@ -104,7 +104,7 @@ class VioGpuAdapter : IVioGpuPCI, public IVioGpuQueueSync
     PKEVENT m_ResolutionEvent;
     HANDLE m_ResolutionEventHandle;
 
-    static const UINT kCursorCacheSize = 16;
+    static const UINT kCursorCacheSize = 32;
     UINT m_CursorSig[kCursorCacheSize];
     VioGpuObj *m_CursorObj[kCursorCacheSize];
     VioGpuMemSegment m_CursorSeg[kCursorCacheSize];
