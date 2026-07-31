@@ -109,6 +109,8 @@ class VioGpuAdapter : IVioGpuPCI, public IVioGpuQueueSync
     BOOLEAN m_bCursorShown;
     UINT m_CursorHotX;
     UINT m_CursorHotY;
+    LONG m_CursorX;
+    LONG m_CursorY;
 
     ULONG m_Id;
     volatile LONG m_VsyncInterruptEnabled;

@@ -186,6 +186,8 @@ VioGpuAdapter::VioGpuAdapter(_In_ DEVICE_OBJECT *pPhysicalDeviceObject)
     m_bCursorShown = FALSE;
     m_CursorHotX = 0;
     m_CursorHotY = 0;
+    m_CursorX = 0;
+    m_CursorY = 0;
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 }
@@ -2261,8 +2263,9 @@ NTSTATUS VioGpuAdapter::SetPointerShape(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSet
         RtlZeroMemory(crsr, sizeof(*crsr));
         crsr->hdr.type = VIRTIO_GPU_CMD_UPDATE_CURSOR;
         crsr->resource_id = m_pCursorBuf->GetId();
-        crsr->pos.x = 0;
-        crsr->pos.y = 0;
+        // keep the cursor where it is: a shape change must NOT teleport it to 0,0
+        crsr->pos.x = m_CursorX;
+        crsr->pos.y = m_CursorY;
         crsr->hot_x = m_CursorHotX;
         crsr->hot_y = m_CursorHotY;
         ret = m_CursorQueue.QueueCursor(vbuf);
@@ -2296,6 +2299,8 @@ NTSTATUS VioGpuAdapter::SetPointerPosition(_In_ CONST DXGKARG_SETPOINTERPOSITION
     RtlZeroMemory(crsr, sizeof(*crsr));
     if (pSetPointerPosition->Flags.Visible)
     {
+        m_CursorX = pSetPointerPosition->X;
+        m_CursorY = pSetPointerPosition->Y;
         if (!m_bCursorShown)
         {
             // transitioning hidden->visible: MOVE_CURSOR does NOT re-show a cursor
