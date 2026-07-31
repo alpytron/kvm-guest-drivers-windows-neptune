@@ -104,8 +104,12 @@ class VioGpuAdapter : IVioGpuPCI, public IVioGpuQueueSync
     PKEVENT m_ResolutionEvent;
     HANDLE m_ResolutionEventHandle;
 
-    VioGpuObj *m_pCursorBuf;
-    VioGpuMemSegment m_CursorSegment;
+    static const UINT kCursorCacheSize = 16;
+    UINT m_CursorSig[kCursorCacheSize];
+    VioGpuObj *m_CursorObj[kCursorCacheSize];
+    VioGpuMemSegment m_CursorSeg[kCursorCacheSize];
+    UINT m_CursorCacheRR;
+    VioGpuObj *m_pCursorBuf; // currently selected cache slot's object
     BOOLEAN m_bCursorShown;
     UINT m_CursorHotX;
     UINT m_CursorHotY;
@@ -299,8 +303,8 @@ class VioGpuAdapter : IVioGpuPCI, public IVioGpuQueueSync
     NTSTATUS SetPowerState(DXGK_DEVICE_INFO *pDeviceInfo,
                            DEVICE_POWER_STATE DevicePowerState,
                            CURRENT_MODE *pCurrentMode);
-    BOOLEAN CreateCursor(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape);
-    BOOLEAN UpdateCursor(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape);
+    BOOLEAN EnsureCursorSlot(UINT i);
+    BOOLEAN UploadCursorShape(UINT i, _In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape);
     BOOLEAN GpuObjectAttach(UINT res_id, VioGpuObj *obj);
     BOOLEAN InterruptRoutine(_In_ PDXGKRNL_INTERFACE pDxgkInterface, _In_ ULONG MessageNumber);
     VOID DpcRoutine(_In_ PDXGKRNL_INTERFACE pDxgkInterface);
