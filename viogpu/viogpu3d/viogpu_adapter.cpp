@@ -2117,6 +2117,12 @@ NTSTATUS VioGpuAdapter::HWInit(PCM_RESOURCE_LIST pResList)
     return status;
 }
 
+// NOTE: hardware cursor is opt-in (HWCursor=1) and currently UNSAFE under
+// heavy load on this 3D driver: shape uploads go through the shared control
+// queue (TransferToHost2D) and, when they interleave with 3D/Venus traffic
+// during rapid shape changes (e.g. window-resize cursors), can wedge the host
+// renderer. Left disabled by default in the INF until the shape upload is
+// serialized with the 3D command stream.
 BOOLEAN VioGpuAdapter::GpuObjectAttach(UINT res_id, VioGpuObj *obj)
 {
     PAGED_CODE();
