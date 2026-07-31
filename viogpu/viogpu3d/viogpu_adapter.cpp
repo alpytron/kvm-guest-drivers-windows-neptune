@@ -183,6 +183,9 @@ VioGpuAdapter::VioGpuAdapter(_In_ DEVICE_OBJECT *pPhysicalDeviceObject)
     m_u32NumCapsets = 0;
     m_u32NumScanouts = 0;
     m_pCursorBuf = NULL;
+    m_bCursorShown = FALSE;
+    m_CursorHotX = 0;
+    m_CursorHotY = 0;
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 }
@@ -2244,20 +2247,29 @@ NTSTATUS VioGpuAdapter::SetPointerShape(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSet
 
     if (UpdateCursor(pSetPointerShape))
     {
+        m_CursorHotX = pSetPointerShape->XHot;
+        m_CursorHotY = pSetPointerShape->YHot;
         PGPU_UPDATE_CURSOR crsr;
         PGPU_VBUFFER vbuf;
         UINT ret = 0;
         crsr = (PGPU_UPDATE_CURSOR)m_CursorQueue.AllocCursor(&vbuf);
+        if (crsr == NULL)
+        {
+            // cursor vbuf pool momentarily exhausted; keep the current shape
+            return STATUS_SUCCESS;
+        }
         RtlZeroMemory(crsr, sizeof(*crsr));
         crsr->hdr.type = VIRTIO_GPU_CMD_UPDATE_CURSOR;
         crsr->resource_id = m_pCursorBuf->GetId();
         crsr->pos.x = 0;
         crsr->pos.y = 0;
-        crsr->hot_x = pSetPointerShape->XHot;
-        crsr->hot_y = pSetPointerShape->YHot;
+        crsr->hot_x = m_CursorHotX;
+        crsr->hot_y = m_CursorHotY;
         ret = m_CursorQueue.QueueCursor(vbuf);
         if (ret == 0)
         {
+            // an UPDATE_CURSOR with a valid resource makes the pointer visible
+            m_bCursorShown = TRUE;
             return STATUS_SUCCESS;
         }
     }
@@ -2275,21 +2287,49 @@ NTSTATUS VioGpuAdapter::SetPointerPosition(_In_ CONST DXGKARG_SETPOINTERPOSITION
     PGPU_UPDATE_CURSOR crsr;
     PGPU_VBUFFER vbuf;
     crsr = (PGPU_UPDATE_CURSOR)m_CursorQueue.AllocCursor(&vbuf);
+    if (crsr == NULL)
+    {
+        // cursor vbuf pool momentarily exhausted under a move flood; drop this
+        // position update rather than dereferencing NULL (prevents a bugcheck).
+        return STATUS_SUCCESS;
+    }
     RtlZeroMemory(crsr, sizeof(*crsr));
     if (pSetPointerPosition->Flags.Visible)
     {
-        crsr->hdr.type = VIRTIO_GPU_CMD_MOVE_CURSOR;
-        crsr->resource_id = m_pCursorBuf->GetId();
-        crsr->pos.x = pSetPointerPosition->X;
-        crsr->pos.y = pSetPointerPosition->Y;
+        if (!m_bCursorShown)
+        {
+            // transitioning hidden->visible: MOVE_CURSOR does NOT re-show a cursor
+            // that was hidden via resource_id 0, so re-issue UPDATE_CURSOR with the
+            // real resource (and hotspot) to bring it back.
+            crsr->hdr.type = VIRTIO_GPU_CMD_UPDATE_CURSOR;
+            crsr->resource_id = m_pCursorBuf->GetId();
+            crsr->pos.x = pSetPointerPosition->X;
+            crsr->pos.y = pSetPointerPosition->Y;
+            crsr->hot_x = m_CursorHotX;
+            crsr->hot_y = m_CursorHotY;
+            m_bCursorShown = TRUE;
+        }
+        else
+        {
+            crsr->hdr.type = VIRTIO_GPU_CMD_MOVE_CURSOR;
+            crsr->resource_id = m_pCursorBuf->GetId();
+            crsr->pos.x = pSetPointerPosition->X;
+            crsr->pos.y = pSetPointerPosition->Y;
+        }
     }
     else
     {
+        if (!m_bCursorShown)
+        {
+            // already hidden; nothing to do
+            return STATUS_SUCCESS;
+        }
         // resource_id 0 with UPDATE_CURSOR hides the pointer
         crsr->hdr.type = VIRTIO_GPU_CMD_UPDATE_CURSOR;
         crsr->resource_id = 0;
         crsr->pos.x = 0;
         crsr->pos.y = 0;
+        m_bCursorShown = FALSE;
     }
     m_CursorQueue.QueueCursor(vbuf);
     return STATUS_SUCCESS;
