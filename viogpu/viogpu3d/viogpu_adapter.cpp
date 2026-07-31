@@ -182,6 +182,7 @@ VioGpuAdapter::VioGpuAdapter(_In_ DEVICE_OBJECT *pPhysicalDeviceObject)
     m_ResolutionEventHandle = NULL;
     m_u32NumCapsets = 0;
     m_u32NumScanouts = 0;
+    m_pCursorBuf = NULL;
 
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
 }
@@ -626,13 +627,13 @@ NTSTATUS VioGpuAdapter::QueryAdapterInfo(_In_ CONST DXGKARG_QUERYADAPTERINFO *pQ
                 pDriverCaps->SupportSmoothRotation = FALSE;
                 pDriverCaps->SupportNonVGA = IsVgaDevice();
 
-                // Disable pointer on viogpu3d for now
-                // if (IsPointerEnabled()) {
-                //    pDriverCaps->MaxPointerWidth = POINTER_SIZE;
-                //    pDriverCaps->MaxPointerHeight = POINTER_SIZE;
-                //    pDriverCaps->PointerCaps.Value = 0;
-                //    pDriverCaps->PointerCaps.Color = 1;
-                //}
+                if (IsPointerEnabled())
+                {
+                    pDriverCaps->MaxPointerWidth = POINTER_SIZE;
+                    pDriverCaps->MaxPointerHeight = POINTER_SIZE;
+                    pDriverCaps->PointerCaps.Value = 0;
+                    pDriverCaps->PointerCaps.Color = 1;
+                }
 
                 DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s Driver caps return\n", __FUNCTION__));
                 return STATUS_SUCCESS;
@@ -2105,7 +2106,187 @@ NTSTATUS VioGpuAdapter::HWInit(PCM_RESOURCE_LIST pResList)
         return status;
     }
 
+    if (!m_CursorSegment.Init(POINTER_SIZE * POINTER_SIZE * 4, NULL))
+    {
+        DbgPrint(TRACE_LEVEL_FATAL, ("%s failed to allocate cursor memory segment\n", __FUNCTION__));
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        VioGpuDbgBreak();
+        return status;
+    }
+
     return status;
+}
+
+BOOLEAN VioGpuAdapter::GpuObjectAttach(UINT res_id, VioGpuObj *obj)
+{
+    PAGED_CODE();
+    PGPU_MEM_ENTRY ents = NULL;
+    PSCATTER_GATHER_LIST sgl = NULL;
+    UINT size = 0;
+    sgl = obj->GetSGList();
+    size = sizeof(GPU_MEM_ENTRY) * sgl->NumberOfElements;
+    ents = reinterpret_cast<PGPU_MEM_ENTRY>(new (NonPagedPoolNx) BYTE[size]);
+    if (!ents)
+    {
+        DbgPrint(TRACE_LEVEL_FATAL, ("<--- %s cannot allocate memory\n", __FUNCTION__));
+        return FALSE;
+    }
+    RtlZeroMemory(ents, size);
+    for (UINT i = 0; i < sgl->NumberOfElements; i++)
+    {
+        ents[i].addr = sgl->Elements[i].Address.QuadPart;
+        ents[i].length = sgl->Elements[i].Length;
+        ents[i].padding = 0;
+    }
+    ctrlQueue.AttachBacking(res_id, ents, sgl->NumberOfElements);
+    obj->SetId(res_id);
+    return TRUE;
+}
+
+BOOLEAN VioGpuAdapter::CreateCursor(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape)
+{
+    UINT resid, format, size;
+    VioGpuObj *obj;
+    PAGED_CODE();
+    UNREFERENCED_PARAMETER(pSetPointerShape);
+
+    size = POINTER_SIZE * POINTER_SIZE * 4;
+    format = ColorFormat(D3DDDIFMT_A8R8G8B8);
+    resid = (UINT)resourceIdr.GetId();
+    ctrlQueue.CreateResource(resid, format, POINTER_SIZE, POINTER_SIZE);
+    obj = new (NonPagedPoolNx) VioGpuObj();
+    if (!obj->Init(size, &m_CursorSegment))
+    {
+        DbgPrint(TRACE_LEVEL_FATAL, ("<--- %s Failed to init cursor obj\n", __FUNCTION__));
+        delete obj;
+        resourceIdr.PutId(resid);
+        return FALSE;
+    }
+    if (!GpuObjectAttach(resid, obj))
+    {
+        DbgPrint(TRACE_LEVEL_FATAL, ("<--- %s Failed to attach cursor object\n", __FUNCTION__));
+        delete obj;
+        resourceIdr.PutId(resid);
+        return FALSE;
+    }
+    m_pCursorBuf = obj;
+    return TRUE;
+}
+
+BOOLEAN VioGpuAdapter::UpdateCursor(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape)
+{
+    PAGED_CODE();
+    RECT Rect;
+    Rect.left = 0;
+    Rect.top = 0;
+    Rect.right = Rect.left + pSetPointerShape->Width;
+    Rect.bottom = Rect.top + pSetPointerShape->Height;
+
+    if ((m_pCursorBuf == NULL) && !CreateCursor(pSetPointerShape))
+    {
+        DbgPrint(TRACE_LEVEL_ERROR, ("<--- %s Cannot create cursor\n", __FUNCTION__));
+        return FALSE;
+    }
+
+    BLT_INFO DstBltInfo;
+    DstBltInfo.pBits = m_pCursorBuf->GetVirtualAddress();
+    DstBltInfo.Pitch = POINTER_SIZE * 4;
+    DstBltInfo.BitsPerPel = BPPFromPixelFormat(D3DDDIFMT_A8R8G8B8);
+    DstBltInfo.Offset.x = 0;
+    DstBltInfo.Offset.y = 0;
+    DstBltInfo.Rotation = D3DKMDT_VPPR_IDENTITY;
+    DstBltInfo.Width = POINTER_SIZE;
+    DstBltInfo.Height = POINTER_SIZE;
+
+    BLT_INFO SrcBltInfo;
+    SrcBltInfo.pBits = (PVOID)pSetPointerShape->pPixels;
+    SrcBltInfo.Pitch = pSetPointerShape->Pitch;
+    SrcBltInfo.BitsPerPel = BPPFromPixelFormat(D3DDDIFMT_A8R8G8B8);
+    SrcBltInfo.Offset.x = 0;
+    SrcBltInfo.Offset.y = 0;
+    SrcBltInfo.Rotation = D3DKMDT_VPPR_IDENTITY;
+    SrcBltInfo.Width = pSetPointerShape->Width;
+    SrcBltInfo.Height = pSetPointerShape->Height;
+
+    BltBits(&DstBltInfo, &SrcBltInfo, &Rect);
+
+    ctrlQueue.TransferToHost2D(m_pCursorBuf->GetId(), 0, pSetPointerShape->Width, pSetPointerShape->Height, 0, 0);
+    return TRUE;
+}
+
+NTSTATUS VioGpuAdapter::SetPointerShape(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape)
+{
+    PAGED_CODE();
+    DbgPrint(TRACE_LEVEL_INFORMATION,
+             ("<--> %s flag=%d pitch=%d id=%d w=%d h=%d x=%d y=%d\n",
+              __FUNCTION__,
+              pSetPointerShape->Flags.Value,
+              pSetPointerShape->Pitch,
+              pSetPointerShape->VidPnSourceId,
+              pSetPointerShape->Width,
+              pSetPointerShape->Height,
+              pSetPointerShape->XHot,
+              pSetPointerShape->YHot));
+
+    // Only color cursors that fit the virtio-gpu 64x64 plane are handled in
+    // hardware; anything else falls back to the OS software cursor.
+    if (!pSetPointerShape->Flags.Color || pSetPointerShape->Width > POINTER_SIZE ||
+        pSetPointerShape->Height > POINTER_SIZE)
+    {
+        return STATUS_NOT_IMPLEMENTED;
+    }
+
+    if (UpdateCursor(pSetPointerShape))
+    {
+        PGPU_UPDATE_CURSOR crsr;
+        PGPU_VBUFFER vbuf;
+        UINT ret = 0;
+        crsr = (PGPU_UPDATE_CURSOR)m_CursorQueue.AllocCursor(&vbuf);
+        RtlZeroMemory(crsr, sizeof(*crsr));
+        crsr->hdr.type = VIRTIO_GPU_CMD_UPDATE_CURSOR;
+        crsr->resource_id = m_pCursorBuf->GetId();
+        crsr->pos.x = 0;
+        crsr->pos.y = 0;
+        crsr->hot_x = pSetPointerShape->XHot;
+        crsr->hot_y = pSetPointerShape->YHot;
+        ret = m_CursorQueue.QueueCursor(vbuf);
+        if (ret == 0)
+        {
+            return STATUS_SUCCESS;
+        }
+    }
+    DbgPrint(TRACE_LEVEL_ERROR, ("<--- %s failed; falling back to software cursor\n", __FUNCTION__));
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+NTSTATUS VioGpuAdapter::SetPointerPosition(_In_ CONST DXGKARG_SETPOINTERPOSITION *pSetPointerPosition)
+{
+    PAGED_CODE();
+    if (m_pCursorBuf == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    PGPU_UPDATE_CURSOR crsr;
+    PGPU_VBUFFER vbuf;
+    crsr = (PGPU_UPDATE_CURSOR)m_CursorQueue.AllocCursor(&vbuf);
+    RtlZeroMemory(crsr, sizeof(*crsr));
+    if (pSetPointerPosition->Flags.Visible)
+    {
+        crsr->hdr.type = VIRTIO_GPU_CMD_MOVE_CURSOR;
+        crsr->resource_id = m_pCursorBuf->GetId();
+        crsr->pos.x = pSetPointerPosition->X;
+        crsr->pos.y = pSetPointerPosition->Y;
+    }
+    else
+    {
+        // resource_id 0 with UPDATE_CURSOR hides the pointer
+        crsr->hdr.type = VIRTIO_GPU_CMD_UPDATE_CURSOR;
+        crsr->resource_id = 0;
+        crsr->pos.x = 0;
+        crsr->pos.y = 0;
+    }
+    m_CursorQueue.QueueCursor(vbuf);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS VioGpuAdapter::HWClose(void)
@@ -2130,6 +2311,13 @@ NTSTATUS VioGpuAdapter::HWClose(void)
 
     ObDereferenceObject(m_pWorkThread);
     }
+
+    if (m_pCursorBuf != NULL)
+    {
+        delete m_pCursorBuf;
+        m_pCursorBuf = NULL;
+    }
+    m_CursorSegment.Close();
 
     frameSegment.Close();
 

@@ -363,7 +363,6 @@ VioGpu3DSetPointerPosition(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_SETPOI
 {
     PAGED_CODE();
     VIOGPU_ASSERT_CHK(hAdapter != NULL);
-    UNREFERENCED_PARAMETER(pSetPointerPosition);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
@@ -372,6 +371,10 @@ VioGpu3DSetPointerPosition(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_SETPOI
         DbgPrint(TRACE_LEVEL_ERROR, ("VioGpu (%p) is being called when not active!", pAdapter));
         VioGpuDbgBreak();
         return STATUS_UNSUCCESSFUL;
+    }
+    if (pAdapter->IsPointerEnabled() && pSetPointerPosition->VidPnSourceId == 0)
+    {
+        return pAdapter->SetPointerPosition(pSetPointerPosition);
     }
     return STATUS_NOT_IMPLEMENTED;
 }
@@ -382,7 +385,6 @@ VioGpu3DSetPointerShape(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_SETPOINTE
 {
     PAGED_CODE();
     VIOGPU_ASSERT_CHK(hAdapter != NULL);
-    UNREFERENCED_PARAMETER(pSetPointerShape);
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<---> %s\n", __FUNCTION__));
 
     VioGpuAdapter *pAdapter = reinterpret_cast<VioGpuAdapter *>(hAdapter);
@@ -391,6 +393,10 @@ VioGpu3DSetPointerShape(_In_ CONST HANDLE hAdapter, _In_ CONST DXGKARG_SETPOINTE
         DbgPrint(TRACE_LEVEL_ERROR,
                  ("<---> %s VioGpu (%p) is being called when not active!\n", __FUNCTION__, pAdapter));
         return STATUS_UNSUCCESSFUL;
+    }
+    if (pAdapter->IsPointerEnabled() && pSetPointerShape->VidPnSourceId == 0)
+    {
+        return pAdapter->SetPointerShape(pSetPointerShape);
     }
     return STATUS_NOT_IMPLEMENTED;
 }
