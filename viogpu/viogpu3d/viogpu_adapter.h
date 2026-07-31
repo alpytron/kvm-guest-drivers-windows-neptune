@@ -150,6 +150,8 @@ class VioGpuAdapter : IVioGpuPCI, public IVioGpuQueueSync
     {
         m_Flags.PointerEnabled = Enabled;
     }
+    NTSTATUS SetPointerShape(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape);
+    NTSTATUS SetPointerPosition(_In_ CONST DXGKARG_SETPOINTERPOSITION *pSetPointerPosition);
     BOOLEAN IsVgaDevice(void) const
     {
 #ifdef RENDER_ONLY
@@ -292,8 +294,6 @@ class VioGpuAdapter : IVioGpuPCI, public IVioGpuQueueSync
     NTSTATUS SetPowerState(DXGK_DEVICE_INFO *pDeviceInfo,
                            DEVICE_POWER_STATE DevicePowerState,
                            CURRENT_MODE *pCurrentMode);
-    NTSTATUS SetPointerShape(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape);
-    NTSTATUS SetPointerPosition(_In_ CONST DXGKARG_SETPOINTERPOSITION *pSetPointerPosition);
     BOOLEAN CreateCursor(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape);
     BOOLEAN UpdateCursor(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSetPointerShape);
     BOOLEAN GpuObjectAttach(UINT res_id, VioGpuObj *obj);
