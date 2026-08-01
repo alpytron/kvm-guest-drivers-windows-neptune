@@ -190,6 +190,7 @@ VioGpuAdapter::VioGpuAdapter(_In_ DEVICE_OBJECT *pPhysicalDeviceObject)
         m_CursorObj[ci] = NULL;
     }
     m_bCursorShown = FALSE;
+    m_bShapeReassertPending = FALSE;
     m_CursorHotX = 0;
     m_CursorHotY = 0;
     m_CursorX = 0;
@@ -2288,6 +2289,7 @@ NTSTATUS VioGpuAdapter::SetPointerShape(_In_ CONST DXGKARG_SETPOINTERSHAPE *pSet
     m_pCursorBuf = m_CursorObj[slot];
     m_CursorHotX = pSetPointerShape->XHot;
     m_CursorHotY = pSetPointerShape->YHot;
+    m_bShapeReassertPending = TRUE;
 
     PGPU_UPDATE_CURSOR crsr;
     PGPU_VBUFFER vbuf;
@@ -2343,6 +2345,20 @@ NTSTATUS VioGpuAdapter::SetPointerPosition(_In_ CONST DXGKARG_SETPOINTERPOSITION
             crsr->hot_x = m_CursorHotX;
             crsr->hot_y = m_CursorHotY;
             m_bCursorShown = TRUE;
+            m_bShapeReassertPending = FALSE;
+        }
+        else if (m_bShapeReassertPending)
+        {
+            // First move after a shape change: re-assert the shape via
+            // UPDATE_CURSOR (not just MOVE_CURSOR) so a dropped shape update
+            // self-heals (fixes a cursor stuck on the previous/last frame).
+            crsr->hdr.type = VIRTIO_GPU_CMD_UPDATE_CURSOR;
+            crsr->resource_id = m_pCursorBuf->GetId();
+            crsr->pos.x = pSetPointerPosition->X;
+            crsr->pos.y = pSetPointerPosition->Y;
+            crsr->hot_x = m_CursorHotX;
+            crsr->hot_y = m_CursorHotY;
+            m_bShapeReassertPending = FALSE;
         }
         else
         {

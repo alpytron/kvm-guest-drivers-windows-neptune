@@ -104,13 +104,14 @@ class VioGpuAdapter : IVioGpuPCI, public IVioGpuQueueSync
     PKEVENT m_ResolutionEvent;
     HANDLE m_ResolutionEventHandle;
 
-    static const UINT kCursorCacheSize = 32;
+    static const UINT kCursorCacheSize = 64;
     UINT m_CursorSig[kCursorCacheSize];
     VioGpuObj *m_CursorObj[kCursorCacheSize];
     VioGpuMemSegment m_CursorSeg[kCursorCacheSize];
     UINT m_CursorCacheRR;
     VioGpuObj *m_pCursorBuf; // currently selected cache slot's object
     BOOLEAN m_bCursorShown;
+    BOOLEAN m_bShapeReassertPending; // re-assert shape on next move (heals a dropped UPDATE_CURSOR)
     UINT m_CursorHotX;
     UINT m_CursorHotY;
     LONG m_CursorX;
