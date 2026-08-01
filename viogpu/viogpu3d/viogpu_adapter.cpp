@@ -2210,6 +2210,11 @@ BOOLEAN VioGpuAdapter::UploadCursorShape(UINT i, _In_ CONST DXGKARG_SETPOINTERSH
     {
         return FALSE;
     }
+    // Clear the whole 64x64 plane first. A cursor glyph is usually smaller than
+    // 64x64; without clearing, the border keeps stale data (old cursor pixels or
+    // reused host memory) that shows up as debris around the pointer.
+    RtlZeroMemory(m_CursorObj[i]->GetVirtualAddress(), POINTER_SIZE * POINTER_SIZE * 4);
+
     RECT Rect;
     Rect.left = 0;
     Rect.top = 0;
@@ -2237,7 +2242,8 @@ BOOLEAN VioGpuAdapter::UploadCursorShape(UINT i, _In_ CONST DXGKARG_SETPOINTERSH
     SrcBltInfo.Height = pSetPointerShape->Height;
 
     BltBits(&DstBltInfo, &SrcBltInfo, &Rect);
-    ctrlQueue.TransferToHost2D(m_CursorObj[i]->GetId(), 0, pSetPointerShape->Width, pSetPointerShape->Height, 0, 0);
+    // transfer the full plane so the host resource has no stale border either
+    ctrlQueue.TransferToHost2D(m_CursorObj[i]->GetId(), 0, POINTER_SIZE, POINTER_SIZE, 0, 0);
     return TRUE;
 }
 
